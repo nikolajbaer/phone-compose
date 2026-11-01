@@ -29,6 +29,12 @@ npm run typecheck
 npm run build      # static site in dist/ (relative paths; works on GitHub Pages)
 ```
 
+## Deploy
+
+`.github/workflows/deploy.yml` tests, builds and publishes `dist/` to GitHub Pages on every push to `main`.
+One-time setup: in the repo's **Settings → Pages**, set **Source** to **GitHub Actions**. The site is then at
+`https://<owner>.github.io/phone-compose/`.
+
 ## Layout
 
 - `src/music/theory.ts` — pitch math: diatonic steps, key signatures, staff positions.
