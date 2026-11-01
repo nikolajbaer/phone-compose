@@ -2,9 +2,10 @@ import * as Tone from 'tone'
 import { CacheStorage, Soundfont, SplendidGrandPiano } from 'smplr'
 import { getInstrument, type InstrumentDef } from '../music/instruments'
 import type { Song } from '../music/song'
-import { absoluteTick, noteMidi } from '../music/song'
+import { soundingNotes } from '../music/song'
 import { TPQ } from '../music/duration'
-import { MAX_POS, MIN_POS, posToStep, toMidi } from '../music/theory'
+import { toMidi } from '../music/theory'
+import { clefRange, getClef } from '../music/clefs'
 
 // Plays a Song. Timing comes from the Tone.js Transport: notes are scheduled
 // at "measure:beat:0" positions, so tempo, looping and the playhead are
@@ -53,8 +54,10 @@ const SYNTH_VOLUME: Record<string, number> = { square: -18, sawtooth: -18, trian
 /** The piano only downloads its mezzo-forte layer and plays everything at that velocity. */
 const PIANO_VELOCITY = 92
 
-/** MIDI notes the treble staff can hold, with room for accidentals. */
-const STAFF_RANGE = Array.from({ length: toMidi(posToStep(MAX_POS), 1) - toMidi(posToStep(MIN_POS), -1) + 1 }, (_, i) => toMidi(posToStep(MIN_POS), -1) + i)
+/** MIDI notes the bass and treble staves can hold, with room for accidentals (G2 to C♯6). */
+const LOW = toMidi(clefRange(getClef('bass')).lo, -1)
+const HIGH = toMidi(clefRange(getClef('treble')).hi, 1)
+const STAFF_RANGE = Array.from({ length: HIGH - LOW + 1 }, (_, i) => LOW + i)
 
 class Player {
   private voices = new Map<string, Voice>()
@@ -173,10 +176,9 @@ class Player {
     const voice = this.voice(song.instrument)
     const beatSeconds = 60 / song.tempo
     const ticksPerTick = transport.PPQ / TPQ
-    for (const note of song.notes) {
-      const midi = noteMidi(note)
+    for (const note of soundingNotes(song)) {
       const seconds = (note.dur / TPQ) * beatSeconds * 0.95
-      transport.schedule((time) => voice.play(midi, time, seconds), `${Math.round(absoluteTick(song, note) * ticksPerTick)}i`)
+      transport.schedule((time) => voice.play(note.midi, time, seconds), `${Math.round(note.start * ticksPerTick)}i`)
     }
   }
 

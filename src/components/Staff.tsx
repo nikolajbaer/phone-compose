@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { TPQ, describeTicks, type BaseDuration, type RestShape } from '../music/duration'
 import type { Chord, Note, Song } from '../music/song'
-import { MAX_POS, MIN_POS, clampPos, keyAlter, letterOf, pitchName, posToStep, stepToPos } from '../music/theory'
-import { SPACE, STEP, beamCount, chordLabels, hitSlot, layoutSong, stemUp, tickToX, type Slot, type SongLayout } from './staffLayout'
+import { MAX_POS, MIN_POS, MIDDLE_POS, clampPos, keyAlter, letterOf, pitchName } from '../music/theory'
+import { clefPosToStep, clefStepToPos, getClef, stemUpFor, type ClefDef } from '../music/clefs'
+import { tieTarget } from '../music/song'
+import { SPACE, STEP, beamCount, chordLabels, hitSlot, layoutSong, tickToX, type Slot, type SongLayout } from './staffLayout'
 
-// The score: a treble staff drawn in SVG with SMuFL glyphs from the Bravura
+// The score: one staff (treble, bass, alto... per the song's clef) drawn in SVG with SMuFL glyphs from the Bravura
 // font. The clef, key and time signature open the line, and the whole line
 // scrolls sideways. Chord symbols are printed above the staff.
 //
@@ -68,19 +70,20 @@ const KEY_SHARP_POS = [8, 5, 9, 6, 3, 7, 4]
 const KEY_FLAT_POS = [4, 7, 3, 6, 2, 5, 1]
 
 export function StaffHeader({ song }: { song: Song }) {
+  const clef = getClef(song.clef)
   const n = Math.abs(song.fifths)
-  const keyX = 2.9 * SPACE
+  const keyX = 6 + 3.2 * SPACE // clefs are about 2.8 spaces wide
   const timeX = keyX + n * 0.95 * SPACE + (n ? 0.4 * SPACE : 0)
   const width = timeX + 2.1 * SPACE
   const digits = (v: number) => String(v).split('').map((d) => GLYPH.timeSig(Number(d))).join('')
   return (
     <svg className="staff-header" width={width} height={STAFF_HEIGHT}>
       <StaffLines width={width} />
-      <text className="glyph" x={6} y={y(2)} fontSize={FONT}>
-        {GLYPH.gClef}
+      <text className="glyph" x={6} y={y(clef.glyphPos)} fontSize={FONT}>
+        {clef.glyph}
       </text>
       {Array.from({ length: n }, (_, i) => (
-        <text key={i} className="glyph" x={keyX + i * 0.95 * SPACE} y={y(song.fifths > 0 ? KEY_SHARP_POS[i] : KEY_FLAT_POS[i])} fontSize={FONT}>
+        <text key={i} className="glyph" x={keyX + i * 0.95 * SPACE} y={y((song.fifths > 0 ? KEY_SHARP_POS[i] : KEY_FLAT_POS[i]) + clef.keyShift)} fontSize={FONT}>
           {song.fifths > 0 ? GLYPH.sharp : GLYPH.flat}
         </text>
       ))}
@@ -103,14 +106,17 @@ interface StemSpec {
 
 /** A chord: noteheads, accidentals, dots, ledger lines, stem and flag (unless beamed). */
 function ChordGlyph({
-  song,
+  clef,
+  showAcc,
   chord,
   headX,
   stem,
   selectedId,
   hiddenId,
 }: {
-  song: Song
+  clef: ClefDef
+  /** Whether a note prints its accidental. */
+  showAcc: (n: Note) => boolean
   chord: Pick<Chord, 'dur' | 'notes'>
   headX: number
   stem?: StemSpec
@@ -122,10 +128,10 @@ function ChordGlyph({
   const d = describeTicks(chord.dur) ?? { base: 'quarter' as const, dotted: false, triplet: false }
   const headW = headWidth(d.base)
   const head = d.base === 'whole' ? GLYPH.noteheadWhole : d.base === 'half' ? GLYPH.noteheadHalf : GLYPH.noteheadBlack
-  const poss = shown.map((n) => stepToPos(n.step))
+  const poss = shown.map((n) => clefStepToPos(clef, n.step))
   const lo = Math.min(...poss)
   const hi = Math.max(...poss)
-  const up = stem?.up ?? stemUp(shown.map((n) => n.step))
+  const up = stem?.up ?? stemUpFor(clef, shown.map((n) => n.step))
   const left = headX
 
   // Notes a second apart sit on opposite sides of the stem.
@@ -158,9 +164,9 @@ function ChordGlyph({
         <line key={p} className="ledger" x1={left - ledgerExt} x2={left + headW + ledgerExt} y1={y(p)} y2={y(p)} />
       ))}
       {shown.map((n) => {
-        const pos = stepToPos(n.step)
+        const pos = clefStepToPos(clef, n.step)
         const dx = shift.get(n.id) ?? 0
-        const needsAcc = n.alter !== keyAlter(letterOf(n.step), song.fifths)
+        const needsAcc = showAcc(n)
         const acc = n.alter > 0 ? GLYPH.sharp : n.alter < 0 ? GLYPH.flat : GLYPH.natural
         const cls = n.id === selectedId ? 'glyph note selected' : 'glyph note'
         return (
@@ -206,6 +212,7 @@ const stemXOf = (s: Slot, up: boolean) => s.headX + (up ? 1.18 * SPACE - STEM_W 
 
 /** Stem ends for each beamed chord, and the beams themselves. */
 function beamGeometry(layout: SongLayout) {
+  const pos = (n: Note) => clefStepToPos(layout.clef, n.step)
   const stems = new Map<Slot, StemSpec>()
   const beams: { key: string; x1: number; x2: number; y: number }[] = []
   for (const m of layout.measures) {
@@ -214,8 +221,8 @@ function beamGeometry(layout: SongLayout) {
       const double = chords.some((c) => beamCount(c.dur) === 2)
       const len = STEM_LEN + (double ? 0.25 * SPACE : 0)
       const endY = g.up
-        ? Math.min(...chords.map((c) => y(Math.max(...c.notes.map((n) => stepToPos(n.step)))) - len))
-        : Math.max(...chords.map((c) => y(Math.min(...c.notes.map((n) => stepToPos(n.step)))) + len))
+        ? Math.min(...chords.map((c) => y(Math.max(...c.notes.map(pos))) - len))
+        : Math.max(...chords.map((c) => y(Math.min(...c.notes.map(pos))) + len))
       g.slots.forEach((s) => stems.set(s, { up: g.up, endY }))
       const beamY = (level: number) => (g.up ? endY + level * BEAM_GAP : endY - BEAM_T - level * BEAM_GAP)
       const xs = g.slots.map((s) => stemXOf(s, g.up))
@@ -261,9 +268,11 @@ interface StaffProps {
   getPlayBeat: () => number | null
   /** Chord input: presses write this chord, voiced with its bass near the pressed pitch. */
   chordInput?: { voice: (bassStep: number) => { step: number; alter: number }[]; label: string } | null
+  /** Sharp/flat/natural for notes being written, or null to follow the key. */
+  inputAlter?: number | null
 }
 
-export function Staff({ song, inputDur, selectedId, onSelect, onPlace, onMove, onPreview, onAddMeasure, getPlayBeat, chordInput }: StaffProps) {
+export function Staff({ song, inputDur, selectedId, onSelect, onPlace, onMove, onPreview, onAddMeasure, getPlayBeat, chordInput, inputAlter = null }: StaffProps) {
   const svgRef = useRef<SVGSVGElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const playheadRef = useRef<SVGLineElement>(null)
@@ -275,6 +284,12 @@ export function Staff({ song, inputDur, selectedId, onSelect, onPlace, onMove, o
   const geometry = useMemo(() => beamGeometry(layout), [layout])
   const labels = useMemo(() => chordLabels(layout), [layout])
   const width = layout.width
+  const clef = layout.clef
+  const posToStep = (pos: number) => clefPosToStep(clef, pos)
+  const stepToPos = (step: number) => clefStepToPos(clef, step)
+  const accShown = (n: Note) => layout.measures[n.measure]?.accidentals.has(n.id) ?? false
+  const ghostAcc = (n: Note) => n.alter !== keyAlter(letterOf(n.step), song.fifths)
+  const ties = useMemo(() => tieCurves(song, layout, geometry.stems), [song, layout, geometry])
 
   // Playhead: moved directly on the DOM each frame, and the score follows it.
   useEffect(() => {
@@ -355,7 +370,7 @@ export function Staff({ song, inputDur, selectedId, onSelect, onPlace, onMove, o
   const onPointerCancel = () => setPress(null)
 
   const ghostStep = press ? posToStep(press.pos) : 0
-  const ghostAlter = keyAlter(letterOf(ghostStep), song.fifths)
+  const ghostAlter = inputAlter ?? keyAlter(letterOf(ghostStep), song.fifths)
   const ghostNote: Note | null = press
     ? { id: '__ghost', measure: press.measure, tick: press.slot.ev.tick, dur: inputDur, step: ghostStep, alter: ghostAlter }
     : null
@@ -406,7 +421,8 @@ export function Staff({ song, inputDur, selectedId, onSelect, onPlace, onMove, o
                     !(chordInput && press?.slot === s) && (
                     <ChordGlyph
                       key={s.ev.tick}
-                      song={song}
+                      clef={clef}
+                      showAcc={accShown}
                       chord={s.ev}
                       headX={s.headX}
                       stem={geometry.stems.get(s)}
@@ -423,7 +439,7 @@ export function Staff({ song, inputDur, selectedId, onSelect, onPlace, onMove, o
                     if (s.ev.kind === 'rest') return y(9)
                     const st = geometry.stems.get(s)
                     const hiPos = Math.max(...s.ev.notes.map((n) => stepToPos(n.step)))
-                    const up = st?.up ?? stemUp(s.ev.notes.map((n) => n.step))
+                    const up = st?.up ?? stemUpFor(clef, s.ev.notes.map((n) => n.step))
                     return up ? (st?.endY ?? y(hiPos) - STEM_LEN) : y(hiPos) - 0.6 * SPACE
                   })
                   const top = Math.min(y(9), ...tops) - 0.9 * SPACE
@@ -445,6 +461,9 @@ export function Staff({ song, inputDur, selectedId, onSelect, onPlace, onMove, o
                 })}
               </g>
             ))}
+            {ties.map((t) => (
+              <path key={t.key} className="tie" d={t.d} />
+            ))}
             {geometry.beams.map((b) => (
               <rect key={b.key} className="beam" x={b.x1} y={b.y} width={b.x2 - b.x1} height={BEAM_T} />
             ))}
@@ -457,7 +476,8 @@ export function Staff({ song, inputDur, selectedId, onSelect, onPlace, onMove, o
               <g className="ghost">
                 {chordInput ? (
                   <ChordGlyph
-                    song={song}
+                    clef={clef}
+                    showAcc={ghostAcc}
                     chord={{
                       dur: ghostOnRest ? inputDur : press.slot.ev.dur,
                       notes: chordInput.voice(ghostStep).map((p, i) => ({ ...ghostNote, id: `__ghost${i}`, ...p })),
@@ -465,7 +485,7 @@ export function Staff({ song, inputDur, selectedId, onSelect, onPlace, onMove, o
                     headX={press.slot.headX}
                   />
                 ) : ghostOnRest ? (
-                  <ChordGlyph song={song} chord={{ dur: inputDur, notes: [ghostNote] }} headX={press.slot.headX} />
+                  <ChordGlyph clef={clef} showAcc={ghostAcc} chord={{ dur: inputDur, notes: [ghostNote] }} headX={press.slot.headX} />
                 ) : (
                   <GhostHead headX={press.slot.headX} pos={press.pos} dur={press.slot.ev.dur} />
                 )}
@@ -503,4 +523,42 @@ function GhostHead({ headX, pos, dur }: { headX: number; pos: number; dur: numbe
       </text>
     </g>
   )
+}
+
+/** Curves for ties, from each tied note's head to the next note's head. */
+function tieCurves(song: Song, layout: SongLayout, stems: Map<Slot, StemSpec>) {
+  const clef = layout.clef
+  const where = new Map<string, { slot: Slot; chordSize: number; mid: number }>()
+  for (const m of layout.measures) {
+    for (const s of m.slots) {
+      if (s.ev.kind !== 'chord') continue
+      const poss = s.ev.notes.map((n) => clefStepToPos(clef, n.step))
+      const mid = (Math.min(...poss) + Math.max(...poss)) / 2
+      for (const n of s.ev.notes) where.set(n.id, { slot: s, chordSize: s.ev.notes.length, mid })
+    }
+  }
+  const out: { key: string; d: string }[] = []
+  for (const n of song.notes) {
+    const t = tieTarget(song, n)
+    const a = where.get(n.id)
+    const b = t && where.get(t.id)
+    if (!t || !a || !b) continue
+    const pos = clefStepToPos(clef, n.step)
+    // Single notes tie on the side away from the stem; in chords, upper notes tie over, lower under.
+    let over: boolean
+    if (a.chordSize === 1) {
+      const st = stems.get(a.slot)
+      over = !(st?.up ?? stemUpFor(clef, [n.step]))
+    } else over = pos > a.mid || (pos === a.mid && pos >= MIDDLE_POS)
+    const dir = over ? -1 : 1
+    const x1 = a.slot.headX + 1.18 * SPACE + 2
+    const x2 = b.slot.headX - 2
+    const y0 = y(pos) + dir * 0.45 * SPACE
+    const h = dir * Math.min(0.9 * SPACE, 6 + (x2 - x1) * 0.08)
+    const th = dir * 0.12 * SPACE
+    // A filled crescent: outer curve there, inner curve back.
+    const d = `M${x1},${y0} C${x1 + (x2 - x1) * 0.25},${y0 + h} ${x2 - (x2 - x1) * 0.25},${y0 + h} ${x2},${y0} C${x2 - (x2 - x1) * 0.25},${y0 + h - th} ${x1 + (x2 - x1) * 0.25},${y0 + h - th} ${x1},${y0} Z`
+    out.push({ key: n.id, d })
+  }
+  return out
 }

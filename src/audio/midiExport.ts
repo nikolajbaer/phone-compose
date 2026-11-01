@@ -2,7 +2,7 @@ import { Midi } from '@tonejs/midi'
 import { getInstrument } from '../music/instruments'
 import type { Song } from '../music/song'
 import { TPQ } from '../music/duration'
-import { absoluteTick, noteMidi } from '../music/song'
+import { soundingNotes } from '../music/song'
 
 /** Build a standard MIDI file (type 1, one track) for a song. */
 export function songToMidi(song: Song): Uint8Array {
@@ -16,10 +16,10 @@ export function songToMidi(song: Song): Uint8Array {
   track.name = song.title
   track.instrument.number = getInstrument(song.instrument).program
   const scale = ppq / TPQ
-  for (const note of [...song.notes].sort((a, b) => absoluteTick(song, a) - absoluteTick(song, b))) {
+  for (const note of soundingNotes(song)) {
     track.addNote({
-      midi: noteMidi(note),
-      ticks: Math.round(absoluteTick(song, note) * scale),
+      midi: note.midi,
+      ticks: Math.round(note.start * scale),
       durationTicks: Math.round(note.dur * scale),
       velocity: 0.8,
     })

@@ -8,16 +8,21 @@ export type InstrumentSource =
   | { kind: 'soundfont'; name: string } // smplr Soundfont, gleitz/midi-js-soundfonts name
   | { kind: 'synth'; synth: 'square' | 'triangle' | 'sawtooth' | 'bell' | 'organ' }
 
+import type { ClefId } from './clefs'
+
 export interface InstrumentDef {
   id: string
+  /** The clef this instrument is usually written in. */
+  clef: ClefId
   name: string
   group: 'Instruments' | 'Synths'
   program: number
   source: InstrumentSource
 }
 
-const sf = (id: string, name: string, program: number, sfName = id): InstrumentDef => ({
+const sf = (id: string, name: string, program: number, sfName = id, clef: ClefId = 'treble'): InstrumentDef => ({
   id,
+  clef,
   name,
   group: 'Instruments',
   program,
@@ -25,6 +30,7 @@ const sf = (id: string, name: string, program: number, sfName = id): InstrumentD
 })
 const synth = (id: 'square' | 'triangle' | 'sawtooth' | 'bell' | 'organ', name: string, program: number): InstrumentDef => ({
   id,
+  clef: 'treble',
   name,
   group: 'Synths',
   program,
@@ -32,16 +38,16 @@ const synth = (id: 'square' | 'triangle' | 'sawtooth' | 'bell' | 'organ', name: 
 })
 
 export const INSTRUMENTS: InstrumentDef[] = [
-  { id: 'piano', name: 'Grand piano', group: 'Instruments', program: 0, source: { kind: 'piano' } },
+  { id: 'piano', clef: 'treble', name: 'Grand piano', group: 'Instruments', program: 0, source: { kind: 'piano' } },
   sf('electric_piano', 'Electric piano', 4, 'electric_piano_1'),
   sf('harpsichord', 'Harpsichord', 6),
   sf('music_box', 'Music box', 10),
   sf('marimba', 'Marimba', 12),
-  sf('nylon_guitar', 'Nylon guitar', 24, 'acoustic_guitar_nylon'),
-  sf('acoustic_bass', 'Acoustic bass', 32),
+  sf('nylon_guitar', 'Nylon guitar', 24, 'acoustic_guitar_nylon', 'treble8vb'),
+  sf('acoustic_bass', 'Acoustic bass', 32, 'acoustic_bass', 'bass8vb'),
   sf('violin', 'Violin', 40),
-  sf('viola', 'Viola', 41),
-  sf('cello', 'Cello', 42),
+  sf('viola', 'Viola', 41, 'viola', 'alto'),
+  sf('cello', 'Cello', 42, 'cello', 'bass'),
   sf('pizzicato_strings', 'Pizzicato strings', 45),
   sf('harp', 'Harp', 46, 'orchestral_harp'),
   sf('strings', 'String ensemble', 48, 'string_ensemble_1'),

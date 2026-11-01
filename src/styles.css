@@ -115,7 +115,7 @@ button, input, select { font: inherit; color: inherit; }
 .menu-item.danger { color: var(--danger); }
 
 /* note-length palette */
-.palette { display: flex; align-items: center; justify-content: center; gap: 4px; padding: 6px 8px; background: var(--panel); border-top: 1px solid #2c2c3e; flex-wrap: nowrap; }
+.palette { display: flex; flex-direction: column; gap: 6px; padding: 6px 8px; background: var(--panel); border-top: 1px solid #2c2c3e; flex-wrap: nowrap; }
 .pal-btn { flex: 1 1 0; min-width: 0; max-width: 44px; height: 46px; display: flex; align-items: center; justify-content: center; background: var(--panel-2); border: 1px solid #3a3a50; border-radius: 10px; padding: 0; cursor: pointer; font-size: 1.1rem; }
 .pal-btn .glyph { fill: var(--ink); }
 .pal-btn.on { background: var(--accent); border-color: var(--accent); }
@@ -142,3 +142,9 @@ button, input, select { font: inherit; color: inherit; }
 .chip-sep { width: 8px; }
 .pal-btn.chord-btn { flex: 0 0 auto; max-width: none; min-width: 52px; padding: 0 6px; font-size: 0.8rem; font-weight: 700; }
 .pal-btn.chord-btn.on { color: #0b1a22; }
+
+.pal-row { display: flex; align-items: center; justify-content: center; gap: 4px; }
+.pal-row .chord-btn { flex: 1 1 auto; max-width: 140px; }
+.tie-icon { fill: var(--ink); }
+.pal-btn.on .tie-icon { fill: #0b1a22; }
+.tie { fill: var(--ink); }

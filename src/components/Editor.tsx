@@ -2,7 +2,22 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { player } from '../audio/player'
 import { downloadMidi } from '../audio/midiExport'
 import type { Song } from '../music/song'
-import { moveNote, placeChord, placeNote, removeNote, setBeatsPerMeasure, setChordDuration, setKey, setMeasures, updateSong, type EditResult } from '../music/song'
+import {
+  moveNote,
+  placeChord,
+  placeNote,
+  removeNote,
+  setAccidental,
+  setBeatsPerMeasure,
+  setChordDuration,
+  setInstrument,
+  setKey,
+  setMeasures,
+  toggleTie,
+  updateSong,
+  type EditResult,
+} from '../music/song'
+import { CLEFS, clefRange, getClef, type ClefId } from '../music/clefs'
 import { choiceTicks, describeTicks, type DurationChoice } from '../music/duration'
 import { KEYS, keyAlter, letterOf, toMidi } from '../music/theory'
 import { InstrumentSelect, InstrumentStatus } from './InstrumentSelect'
@@ -27,6 +42,8 @@ export function Editor({ song, onChange, onNewSong, onHome }: EditorProps) {
   const [chordSpec, setChordSpec] = useState<ChordSpec>(() => diatonicChords(song.fifths)[0])
   const [chordInput, setChordInput] = useState(false)
   const [pickerOpen, setPickerOpen] = useState(false)
+  /** Sharp/flat/natural for the next notes written, or null to follow the key signature. */
+  const [inputAlter, setInputAlter] = useState<number | null>(null)
   const history = useRef<Song[]>([])
   const songRef = useRef(song)
   songRef.current = song
@@ -90,16 +107,37 @@ export function Editor({ song, onChange, onNewSong, onHome }: EditorProps) {
     }
   }
 
+  const clef = getClef(song.clef)
+  const range = clefRange(clef)
+  const voice = (spec: ChordSpec, bass: number) => voiceChord(spec, bass, range)
+
   const preview = (step: number) => {
     void player.unlock().then(() => {
-      if (chordInput) player.previewChord(song.instrument, voiceChord(chordSpec, step).map((p) => toMidi(p.step, p.alter)), 0.4)
-      else player.preview(song.instrument, toMidi(step, keyAlter(letterOf(step), song.fifths)))
+      if (chordInput) player.previewChord(song.instrument, voice(chordSpec, step).map((p) => toMidi(p.step, p.alter)), 0.4)
+      else player.preview(song.instrument, toMidi(step, inputAlter ?? keyAlter(letterOf(step), song.fifths)))
     })
   }
 
   const previewSpec = (spec: ChordSpec) => {
-    const bass = selected ? Math.min(...song.notes.filter((n) => n.measure === selected.measure && n.tick === selected.tick).map((n) => n.step)) : 0
-    void player.unlock().then(() => player.previewChord(song.instrument, voiceChord(spec, bass).map((p) => toMidi(p.step, p.alter))))
+    const bass = selected
+      ? Math.min(...song.notes.filter((n) => n.measure === selected.measure && n.tick === selected.tick).map((n) => n.step))
+      : clef.bottomStep + 2
+    void player.unlock().then(() => player.previewChord(song.instrument, voice(spec, bass).map((p) => toMidi(p.step, p.alter))))
+  }
+
+  const tie = () => {
+    if (!selected) return
+    const r = toggleTie(song, selected.id, choiceTicks(choice))
+    if (apply(r) && r.nextId) setSelectedId(r.nextId)
+  }
+
+  const accidental = (alter: number) => {
+    if (selected) {
+      edit(setAccidental(song, selected.id, alter))
+      void player.unlock().then(() => player.preview(song.instrument, toMidi(selected.step, alter)))
+    } else {
+      setInputAlter((a) => (a === alter ? null : alter))
+    }
   }
 
   /** The picker's main button: replace the selected chord, or turn on chord input. */
@@ -108,7 +146,7 @@ export function Editor({ song, onChange, onNewSong, onHome }: EditorProps) {
     if (selected) {
       const chord = song.notes.filter((n) => n.measure === selected.measure && n.tick === selected.tick)
       const bass = Math.min(...chord.map((n) => n.step))
-      const r = placeChord(song, selected.measure, selected.tick, selected.dur, voiceChord(chordSpec, bass))
+      const r = placeChord(song, selected.measure, selected.tick, selected.dur, voice(chordSpec, bass))
       if (apply(r)) setSelectedId(r.song.notes.find((n) => n.measure === selected.measure && n.tick === selected.tick)?.id ?? null)
     } else {
       setChordInput(true)
@@ -147,10 +185,11 @@ export function Editor({ song, onChange, onNewSong, onHome }: EditorProps) {
           onSelect={setSelectedId}
           onPlace={(m, tick, step) => {
             setSelectedId(null)
-            if (chordInput) apply(placeChord(song, m, tick, choiceTicks(choice), voiceChord(chordSpec, step)))
-            else apply(placeNote(song, m, tick, choiceTicks(choice), step))
+            if (chordInput) apply(placeChord(song, m, tick, choiceTicks(choice), voice(chordSpec, step)))
+            else apply(placeNote(song, m, tick, choiceTicks(choice), step, inputAlter ?? undefined))
           }}
-          chordInput={chordInput ? { voice: (step) => voiceChord(chordSpec, step), label: specName(chordSpec) } : null}
+          chordInput={chordInput ? { voice: (step) => voice(chordSpec, step), label: specName(chordSpec) } : null}
+          inputAlter={inputAlter}
           onMove={(id, step) => edit(moveNote(song, id, step))}
           onPreview={preview}
           onAddMeasure={() => edit(setMeasures(song, song.measures + 1))}
@@ -161,7 +200,7 @@ export function Editor({ song, onChange, onNewSong, onHome }: EditorProps) {
             (chordInput
               ? `Chord input: tap a rest to write ${specName(chordSpec)} — slide up or down to move it. Tap Chord to change or stop.`
               : selected
-              ? 'Note selected: pick a length to change it, Chord to replace it, 🗑 to delete it, or tap it again to deselect.'
+              ? 'Note selected: change its length, tie it to the next note, give it a ♭ ♮ ♯, replace it with a Chord, or 🗑 it. Tap it again to deselect.'
               : 'Pick a length, then tap a rest and slide up or down to choose the pitch. Tap a note to select it; drag it to move it.')}
         </p>
       </main>
@@ -176,6 +215,11 @@ export function Editor({ song, onChange, onNewSong, onHome }: EditorProps) {
         }}
         chordLabel={chordInput ? specName(chordSpec) : null}
         onChord={() => setPickerOpen(true)}
+        canTie={!!selected}
+        tied={!!selected?.tie}
+        onTie={tie}
+        accidental={selected ? selected.alter : inputAlter}
+        onAccidental={accidental}
       />
 
       {pickerOpen && (
@@ -213,7 +257,7 @@ export function Editor({ song, onChange, onNewSong, onHome }: EditorProps) {
         </label>
         <label className="field">
           <span>Sound</span>
-          <InstrumentSelect value={song.instrument} onChange={(id) => edit(updateSong(song, { instrument: id }))} />
+          <InstrumentSelect value={song.instrument} onChange={(id) => edit(setInstrument(song, id))} />
           <InstrumentStatus id={song.instrument} />
         </label>
       </footer>
@@ -253,6 +297,16 @@ export function Editor({ song, onChange, onNewSong, onHome }: EditorProps) {
                 </select>
               </label>
             </div>
+            <label>
+              Clef
+              <select value={clef.id} onChange={(e) => edit(updateSong(song, { clef: e.target.value as ClefId }))}>
+                {CLEFS.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </label>
             <div className="menu-row">
               <button className="menu-item" onClick={() => edit(setMeasures(song, song.measures + 1))}>
                 ＋ Add measure

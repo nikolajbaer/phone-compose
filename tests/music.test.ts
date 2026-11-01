@@ -12,7 +12,12 @@ import {
   moveNote,
   noteMidi,
   normalizeSong,
+  accidentalsInMeasure,
   placeChord,
+  setAccidental,
+  setInstrument,
+  soundingNotes,
+  toggleTie,
   placeNote,
   removeNote,
   setBeatsPerMeasure,
@@ -23,6 +28,7 @@ import {
 } from '../src/music/song'
 import { keyAlter, pitchName, posToStep, toMidi } from '../src/music/theory'
 import { layoutSong } from '../src/components/staffLayout'
+import { clefPosToStep, clefRange, getClef } from '../src/music/clefs'
 
 const newSong = (fifths = 0) => createSong({ title: 'T', tempo: 120, beatsPerMeasure: 4, fifths, instrument: 'square' })
 const Q = TPQ
@@ -261,5 +267,95 @@ describe('chord picker', () => {
       [4, 2 * Q],
     ])
     expect(placeChord(s, 0, 3 * Q, 2 * Q, voiceChord(G7, 4)).error).toBeTruthy()
+  })
+})
+
+describe('ties', () => {
+  it('ties to the next note, writing it if needed, across the barline', () => {
+    let s = add(newSong(), 0, 3 * Q, Q, 4) // G4 on beat 4
+    const first = s.notes[0].id
+    const r = toggleTie(s, first, 2 * Q)
+    s = r.song
+    expect(r.nextId).toBeTruthy()
+    const next = s.notes.find((n) => n.id === r.nextId)!
+    expect([next.measure, next.tick, next.dur, next.step]).toEqual([1, 0, 2 * Q, 4])
+    expect(soundingNotes(s)).toEqual([{ midi: 67, start: 3 * Q, dur: 3 * Q }])
+    // Untie: two separate notes again.
+    s = toggleTie(s, first, Q).song
+    expect(soundingNotes(s).map((n) => n.dur)).toEqual([Q, 2 * Q])
+  })
+
+  it('joins an existing note of the same pitch and chains', () => {
+    let s = add(add(add(newSong(), 0, 0, Q, 0), 0, Q, Q, 0), 0, 2 * Q, Q, 0)
+    const [a, b] = s.notes
+    s = toggleTie(toggleTie(s, a.id, Q).song, b.id, Q).song
+    expect(s.notes).toHaveLength(3)
+    expect(soundingNotes(s)).toEqual([{ midi: 60, start: 0, dur: 3 * Q }])
+  })
+
+  it('refuses to tie past the last measure', () => {
+    const s = add(setMeasures(newSong(), 1), 0, 3 * Q, Q, 0)
+    expect(toggleTie(s, s.notes[0].id, Q).error).toBeTruthy()
+  })
+})
+
+describe('accidentals', () => {
+  it('writes notes with an explicit accidental and changes it on a note', () => {
+    let s = placeNote(newSong(), 0, 0, Q, 3, 1).song // F#4 in C
+    expect(noteMidi(s.notes[0])).toBe(66)
+    s = setAccidental(s, s.notes[0].id, -1) // Fb4
+    expect(noteMidi(s.notes[0])).toBe(64)
+  })
+
+  it('prints accidentals the way notation does within a measure', () => {
+    let s = placeNote(newSong(), 0, 0, Q, 3, 1).song // F#
+    s = placeNote(s, 0, Q, Q, 3, 1).song // F# again: carried, no sign
+    s = placeNote(s, 0, 2 * Q, Q, 3, 0).song // F natural: needs a natural
+    s = placeNote(s, 1, 0, Q, 3, 0).song // new measure, F: nothing
+    const [a, b, c] = s.notes
+    expect([...accidentalsInMeasure(s, 0)]).toEqual([a.id, c.id])
+    expect(accidentalsInMeasure(s, 1).size).toBe(0)
+    expect(b).toBeTruthy()
+  })
+
+  it('does not repeat the accidental on a note tied over the barline', () => {
+    let s = placeNote(newSong(), 0, 3 * Q, Q, 3, 1).song
+    s = toggleTie(s, s.notes[0].id, Q).song
+    expect(accidentalsInMeasure(s, 1).size).toBe(0)
+    expect(noteMidi(s.notes[1])).toBe(66)
+  })
+})
+
+describe('clefs', () => {
+  it('maps staff positions to pitches for each clef', () => {
+    const name = (clef: string, pos: number) => pitchName(clefPosToStep(getClef(clef), pos), 0)
+    expect(name('treble', 0)).toBe('E4')
+    expect(name('bass', 0)).toBe('G2')
+    expect(name('bass', 8)).toBe('A3')
+    expect(name('alto', 4)).toBe('C4') // middle line
+    expect(name('treble8vb', 0)).toBe('E3')
+    expect(name('bass8vb', 0)).toBe('G1')
+  })
+
+  it('picks the clef of the instrument', () => {
+    const s = newSong()
+    expect(s.clef).toBe('treble')
+    expect(setInstrument(s, 'viola').clef).toBe('alto')
+    expect(setInstrument(s, 'cello').clef).toBe('bass')
+    expect(setInstrument(s, 'nylon_guitar').clef).toBe('treble8vb')
+    expect(setInstrument(s, 'acoustic_bass').clef).toBe('bass8vb')
+    expect(setInstrument(s, 'flute').clef).toBe('treble')
+  })
+
+  it('voices chords inside the clef range', () => {
+    const range = clefRange(getClef('bass'))
+    const steps = voiceChord({ letter: 0, alter: 0, quality: 'maj7', inversion: 0 }, 0, range).map((p) => p.step)
+    expect(Math.max(...steps)).toBeLessThanOrEqual(range.hi)
+    expect(Math.min(...steps)).toBeGreaterThanOrEqual(range.lo)
+  })
+
+  it('upgrades songs saved without a clef from their instrument', () => {
+    const old = { ...newSong(), instrument: 'cello', clef: undefined } as unknown as Song
+    expect(normalizeSong(old).clef).toBe('bass')
   })
 })

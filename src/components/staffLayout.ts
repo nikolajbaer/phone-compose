@@ -1,8 +1,8 @@
 import { chordName } from '../music/chords'
 import { TPQ, describeTicks } from '../music/duration'
 import type { MeasureEvent, Song } from '../music/song'
-import { measureEvents, measureTicks } from '../music/song'
-import { MIDDLE_POS, keyAlter, letterOf, stepToPos } from '../music/theory'
+import { accidentalsInMeasure, measureEvents, measureTicks } from '../music/song'
+import { getClef, stemUpFor, type ClefDef } from '../music/clefs'
 
 // Horizontal layout of the score. Each event (chord or rest) gets a slot whose
 // width grows with its length, so short notes stay wide enough to tap.
@@ -41,18 +41,21 @@ export interface MeasureLayout {
   slots: Slot[]
   beams: BeamGroup[]
   tuplets: TupletGroup[]
+  /** Ids of notes that print an accidental. */
+  accidentals: Set<string>
 }
 
 export interface SongLayout {
   measures: MeasureLayout[]
   width: number
+  clef: ClefDef
 }
 
-export function slotWidth(ev: MeasureEvent, fifths: number): number {
+export function slotWidth(ev: MeasureEvent, hasAcc: boolean): number {
   let w = 44 + 34 * Math.sqrt(ev.dur / TPQ)
   const d = describeTicks(ev.dur)
   if (d?.dotted) w += 0.6 * SPACE
-  if (ev.kind === 'chord' && ev.notes.some((n) => n.alter !== keyAlter(letterOf(n.step), fifths))) w += ACC_ROOM
+  if (hasAcc) w += ACC_ROOM
   return Math.round(w)
 }
 
@@ -62,22 +65,18 @@ const beamCount = (dur: number) => {
 }
 export { beamCount }
 
-/** Whether a chord's stem points up: the note farthest from the middle line decides. */
-export function stemUp(steps: number[]): boolean {
-  const poss = steps.map(stepToPos)
-  return MIDDLE_POS - Math.min(...poss) >= Math.max(...poss) - MIDDLE_POS
-}
-
 export function layoutSong(song: Song): SongLayout {
+  const clef = getClef(song.clef)
   const measures: MeasureLayout[] = []
   let x = 0
   for (let m = 0; m < song.measures; m++) {
     const events = measureEvents(song, m)
+    const accidentals = accidentalsInMeasure(song, m)
     const slots: Slot[] = []
     let sx = x + MEASURE_PAD_L
     for (const ev of events) {
-      const w = slotWidth(ev, song.fifths)
-      const hasAcc = ev.kind === 'chord' && ev.notes.some((n) => n.alter !== keyAlter(letterOf(n.step), song.fifths))
+      const hasAcc = ev.kind === 'chord' && ev.notes.some((n) => accidentals.has(n.id))
+      const w = slotWidth(ev, hasAcc)
       slots.push({ ev, x: sx, w, headX: sx + 8 + (hasAcc ? ACC_ROOM : 0) })
       sx += w
     }
@@ -91,7 +90,7 @@ export function layoutSong(song: Song): SongLayout {
         const steps = run.flatMap((s) => (s.ev.kind === 'chord' ? s.ev.notes.map((n) => n.step) : []))
         const g = beams.length
         run.forEach((s) => (s.beam = g))
-        beams.push({ slots: run, up: stemUp(steps) })
+        beams.push({ slots: run, up: stemUpFor(clef, steps) })
       }
       run = []
     }
@@ -123,10 +122,10 @@ export function layoutSong(song: Song): SongLayout {
     }
     endTuplet()
 
-    measures.push({ index: m, x, width, slots, beams, tuplets })
+    measures.push({ index: m, x, width, slots, beams, tuplets, accidentals })
     x += width
   }
-  return { measures, width: x }
+  return { measures, width: x, clef }
 }
 
 /** The slot under an x coordinate. */

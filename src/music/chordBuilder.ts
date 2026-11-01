@@ -1,4 +1,5 @@
-import { LETTERS, MAX_POS, MIN_POS, keyAlter, mod, posToStep, toMidi } from './theory'
+import { LETTERS, keyAlter, mod, toMidi } from './theory'
+import { clefRange, getClef } from './clefs'
 
 // Builds the notes of a chord from a root, a quality and an inversion, spelled
 // properly (G7 is G B D F, never G B D E♯), in close position with the bass
@@ -72,10 +73,10 @@ function spellTone(rootStep: number, rootAlter: number, [steps, semis]: Tone): P
 
 /**
  * The chord's notes, low to high. The bass is put in the octave nearest to
- * `bassStep`; then the chord is moved by octaves if needed to stay between
- * G3 and C6.
+ * `bassStep`; then the chord is moved by octaves if needed to stay within
+ * the staff range given (the treble staff by default).
  */
-export function voiceChord(spec: ChordSpec, bassStep: number): Pitch[] {
+export function voiceChord(spec: ChordSpec, bassStep: number, range = clefRange(getClef('treble'))): Pitch[] {
   const q = getQuality(spec.quality)
   const inv = Math.min(spec.inversion, inversionCount(spec.quality) - 1)
   const core = q.tones.filter(([s]) => s < 7)
@@ -92,8 +93,7 @@ export function voiceChord(spec: ChordSpec, bassStep: number): Pitch[] {
       spellTone(rs, spec.alter, tone),
     )
   let notes = build(rootStep)
-  const lo = posToStep(MIN_POS)
-  const hi = posToStep(MAX_POS)
+  const { lo, hi } = range
   while (Math.min(...notes.map((n) => n.step)) < lo) notes = build((rootStep += 7))
   while (Math.max(...notes.map((n) => n.step)) > hi && Math.min(...notes.map((n) => n.step)) - 7 >= lo) {
     notes = build((rootStep -= 7))

@@ -25,6 +25,14 @@ you write on by tapping, in the spirit of BeepBox but with real notes instead of
   spelled properly and voiced in close position on the staff. With a note selected it replaces that
   chord (keeping its length); otherwise it turns on chord input: tapping a rest writes the chord at the
   selected length, with its bass near where you press (slide to move it up or down).
+- **Ties**: select a note and press the tie button to tie it to the same pitch at the next position
+  (writing that note if there's a rest, across barlines too). Tied notes play and export as one note.
+- **Sharps and flats**: with a note selected, ♭ ♮ ♯ set its accidental; with nothing selected they set the
+  accidental for the notes you write next (tap again to go back to the key signature). Accidentals are
+  printed as in standard notation: they carry through the measure and naturals cancel them.
+- **Clefs**: treble, bass, alto, treble 8vb (guitar) and bass 8vb (double bass). Choosing an instrument
+  switches to its usual clef (viola → alto, cello → bass, guitar → treble 8vb, acoustic bass → bass 8vb);
+  the ☰ menu can override it. Notes keep their pitch when the clef changes.
 - **Editing**: tap a note to select it; the palette then changes that chord's length and 🗑 deletes the
   note. Drag a note up or down to move it. Undo with ↶.
 - **Playback**: play/stop, looping, a playhead that the score follows, and a tempo stepper. Timing comes
@@ -63,10 +71,11 @@ repository for its terms before distributing it in other ways.
 
 - `src/music/theory.ts` — pitch math: diatonic steps, key signatures, staff positions.
 - `src/music/duration.ts` — note lengths in ticks (48 per quarter), dotted/triplet values, rest filling.
+- `src/music/clefs.ts` — clefs and how they map pitches to staff positions.
 - `src/music/chords.ts` — chord symbol naming.
 - `src/music/chordBuilder.ts` — building chords from root, type and inversion; chords of a key.
 - `src/music/song.ts` — the song model and pure editing functions (place / move / remove notes, change
-  lengths, key, meter). Songs saved before note lengths existed are upgraded on load.
+  lengths, ties, accidentals, key, meter, instrument and clef). Songs saved before note lengths existed are upgraded on load.
 - `src/music/storage.ts` — saving songs in localStorage.
 - `src/music/instruments.ts` — the instrument list: smplr sample sets, synths, General MIDI programs.
 - `src/audio/player.ts` — playback and note previews (Tone.js timing, smplr or Tone.js sound).
