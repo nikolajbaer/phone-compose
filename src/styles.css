@@ -58,7 +58,10 @@ button, input, select { font: inherit; color: inherit; }
 .topbar { display: flex; align-items: center; gap: 4px; padding: calc(6px + env(safe-area-inset-top)) 6px 6px; background: var(--panel); border-bottom: 1px solid #2c2c3e; }
 .title-input { flex: 1; min-width: 0; background: transparent; border: 0; font-size: 1.1rem; font-weight: 600; padding: 8px; border-radius: 8px; }
 .title-input:focus { outline: 1px solid var(--panel-2); background: var(--bg); }
-.score { flex: 1; display: flex; flex-direction: column; justify-content: center; overflow-x: hidden; overflow-y: auto; min-height: 0; }
+.score { flex: 1; display: flex; flex-direction: column; overflow-x: hidden; overflow-y: auto; min-height: 0; }
+/* Centred when it fits, scrolls from the top when it does not. */
+.score > .staff-row { margin-top: auto; flex: none; }
+.score > .hint { margin-bottom: auto; }
 .hint { color: var(--muted); font-size: 0.8rem; text-align: center; padding: 0 16px; margin: 8px 0; }
 
 .transport {
@@ -157,3 +160,11 @@ button, input, select { font: inherit; color: inherit; }
 .track-tab.add { background: transparent; border-style: dashed; color: var(--muted); }
 .track-num { font-size: 0.75rem; opacity: 0.7; }
 .slide { fill: var(--ink); }
+
+/* grand staff */
+.staff-stack { display: flex; flex-direction: column; }
+.staff-line { display: flex; }
+.brace { flex: none; display: block; }
+.brace path { fill: var(--ink); }
+.brace .system-line { stroke: var(--staff); stroke-width: 1.6; }
+.menu-item.toggle.on { color: var(--accent); }

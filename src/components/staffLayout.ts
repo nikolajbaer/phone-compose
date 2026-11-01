@@ -66,66 +66,105 @@ const beamCount = (dur: number) => {
 export { beamCount }
 
 export function layoutSong(song: Part): SongLayout {
-  const clef = getClef(song.clef)
-  const measures: MeasureLayout[] = []
+  return layoutStaves([song])[0]
+}
+
+/**
+ * Lay out several staves that share measures (a grand staff) so barlines and
+ * notes sounding together line up. Every onset on any staff starts a column;
+ * each column is as wide as the widest share any staff's event needs of it,
+ * and an event's slot spans the columns it lasts through. With one staff the
+ * columns are just its events.
+ */
+export function layoutStaves(parts: Part[]): SongLayout[] {
+  const clefs = parts.map((p) => getClef(p.clef))
+  const out: MeasureLayout[][] = parts.map(() => [])
+  const measures = parts[0].measures
   let x = 0
-  for (let m = 0; m < song.measures; m++) {
-    const events = measureEvents(song, m)
-    const accidentals = accidentalsInMeasure(song, m)
-    const slots: Slot[] = []
-    let sx = x + MEASURE_PAD_L
-    for (const ev of events) {
-      const hasAcc = ev.kind === 'chord' && ev.notes.some((n) => accidentals.has(n.id))
-      const w = slotWidth(ev, hasAcc)
-      slots.push({ ev, x: sx, w, headX: sx + 8 + (hasAcc ? ACC_ROOM : 0) })
-      sx += w
+  for (let m = 0; m < measures; m++) {
+    const events = parts.map((p) => measureEvents(p, m))
+    const accidentals = parts.map((p) => accidentalsInMeasure(p, m))
+    const len = measureTicks(parts[0])
+    const onsets = [...new Set(events.flatMap((evs) => evs.map((e) => e.tick)))].sort((a, b) => a - b)
+    const edges = [...onsets, len]
+    const colW = onsets.map((t, i) => {
+      const colDur = edges[i + 1] - t
+      let w = 0
+      events.forEach((evs, k) => {
+        const e = evs.find((ev) => ev.tick <= t && ev.tick + ev.dur > t)
+        if (!e) return
+        const hasAcc = e.kind === 'chord' && e.notes.some((n) => accidentals[k].has(n.id))
+        w = Math.max(w, (slotWidth(e, hasAcc) * colDur) / e.dur)
+      })
+      return w
+    })
+    const colX: number[] = []
+    let cx = x + MEASURE_PAD_L
+    for (const w of colW) {
+      colX.push(cx)
+      cx += w
     }
-    const width = sx + MEASURE_PAD_R - x
+    colX.push(cx)
+    const width = Math.round(cx + MEASURE_PAD_R - x)
+    const xAt = (tick: number) => colX[edges.indexOf(tick)] ?? cx
 
-    // Beams: runs of beamable chords within one beat.
-    const beams: BeamGroup[] = []
-    let run: Slot[] = []
-    const flush = () => {
-      if (run.length >= 2) {
-        const steps = run.flatMap((s) => (s.ev.kind === 'chord' ? s.ev.notes.map((n) => n.step) : []))
-        const g = beams.length
-        run.forEach((s) => (s.beam = g))
-        beams.push({ slots: run, up: stemUpFor(clef, steps) })
-      }
-      run = []
-    }
-    for (const s of slots) {
-      const beat = Math.floor(s.ev.tick / TPQ)
-      const prevBeat = run.length ? Math.floor(run[0].ev.tick / TPQ) : beat
-      if (s.ev.kind !== 'chord' || beamCount(s.ev.dur) === 0 || beat !== prevBeat) flush()
-      if (s.ev.kind === 'chord' && beamCount(s.ev.dur) > 0) run.push(s)
-    }
-    flush()
-
-    // Tuplets: runs of triplet-valued events.
-    const tuplets: TupletGroup[] = []
-    let tg: Slot[] = []
-    const endTuplet = () => {
-      if (tg.length) tuplets.push({ slots: tg })
-      tg = []
-    }
-    for (const s of slots) {
-      const trip = s.ev.kind === 'rest' ? s.ev.triplet : describeTicks(s.ev.dur)?.triplet
-      if (!trip) {
-        endTuplet()
-        continue
-      }
-      // A triplet group lasts as long as three of its first note: close it when full.
-      const sum = tg.reduce((a, t) => a + t.ev.dur, 0)
-      if (tg.length && sum >= 3 * tg[0].ev.dur) endTuplet()
-      tg.push(s)
-    }
-    endTuplet()
-
-    measures.push({ index: m, x, width, slots, beams, tuplets, accidentals })
+    parts.forEach((_, k) => {
+      const slots: Slot[] = events[k].map((ev) => {
+        const hasAcc = ev.kind === 'chord' && ev.notes.some((n) => accidentals[k].has(n.id))
+        const sx = xAt(ev.tick)
+        return { ev, x: sx, w: xAt(ev.tick + ev.dur) - sx, headX: sx + 8 + (hasAcc ? ACC_ROOM : 0) }
+      })
+      out[k].push({ index: m, x, width, slots, beams: beamGroups(slots, clefs[k]), tuplets: tupletGroups(slots), accidentals: accidentals[k] })
+    })
     x += width
   }
-  return { measures, width: x, clef }
+  return out.map((ms, k) => ({ measures: ms, width: x, clef: clefs[k] }))
+}
+
+/** Beams: runs of beamable chords within one beat. */
+function beamGroups(slots: Slot[], clef: ClefDef): BeamGroup[] {
+  const beams: BeamGroup[] = []
+  let run: Slot[] = []
+  const flush = () => {
+    if (run.length >= 2) {
+      const steps = run.flatMap((s) => (s.ev.kind === 'chord' ? s.ev.notes.map((n) => n.step) : []))
+      const g = beams.length
+      run.forEach((s) => (s.beam = g))
+      beams.push({ slots: run, up: stemUpFor(clef, steps) })
+    }
+    run = []
+  }
+  for (const s of slots) {
+    const beat = Math.floor(s.ev.tick / TPQ)
+    const prevBeat = run.length ? Math.floor(run[0].ev.tick / TPQ) : beat
+    if (s.ev.kind !== 'chord' || beamCount(s.ev.dur) === 0 || beat !== prevBeat) flush()
+    if (s.ev.kind === 'chord' && beamCount(s.ev.dur) > 0) run.push(s)
+  }
+  flush()
+  return beams
+}
+
+/** Tuplets: runs of triplet-valued events. */
+function tupletGroups(slots: Slot[]): TupletGroup[] {
+  const tuplets: TupletGroup[] = []
+  let tg: Slot[] = []
+  const endTuplet = () => {
+    if (tg.length) tuplets.push({ slots: tg })
+    tg = []
+  }
+  for (const s of slots) {
+    const trip = s.ev.kind === 'rest' ? s.ev.triplet : describeTicks(s.ev.dur)?.triplet
+    if (!trip) {
+      endTuplet()
+      continue
+    }
+    // A triplet group lasts as long as three of its first note: close it when full.
+    const sum = tg.reduce((a, t) => a + t.ev.dur, 0)
+    if (tg.length && sum >= 3 * tg[0].ev.dur) endTuplet()
+    tg.push(s)
+  }
+  endTuplet()
+  return tuplets
 }
 
 /** The slot under an x coordinate. */

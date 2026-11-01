@@ -6,6 +6,9 @@ import {
   addTrack,
   editAllParts,
   partOf,
+  partsOf,
+  setTrackGrand,
+  setTrackInstrument,
   removeTrack,
   setTrackMuted,
   withPart,
@@ -16,7 +19,6 @@ import {
   setAccidental,
   setBeatsPerMeasure,
   setChordDuration,
-  setInstrument,
   setKey,
   setMeasures,
   tieTarget,
@@ -31,7 +33,7 @@ import { InstrumentSelect, InstrumentStatus } from './InstrumentSelect'
 import { DurationPalette } from './DurationPalette'
 import { ChordPicker } from './ChordPicker'
 import { diatonicChords, specName, voiceChord, type ChordSpec } from '../music/chordBuilder'
-import { Staff } from './Staff'
+import { Score } from './Staff'
 import { TrackBar } from './TrackBar'
 
 interface EditorProps {
@@ -57,9 +59,12 @@ export function Editor({ song, onChange, onNewSong, onHome }: EditorProps) {
   songRef.current = song
   const [active, setActive] = useState(0)
   const [trackSheet, setTrackSheet] = useState(false)
+  /** The staff last touched (0 = top), for a grand staff. */
+  const [staffIdx, setStaffIdx] = useState(0)
   const track = Math.min(active, song.tracks.length - 1)
-  /** The active track with the song's settings: what the staff shows and edits. */
-  const part = partOf(song, track)
+  const grand = !!song.tracks[track].grand
+  /** The active track's staves with the song's settings: what the score shows and edits. */
+  const parts = partsOf(song, track)
 
   // Every edit goes through here so it can be undone.
   const edit = useCallback(
@@ -71,21 +76,11 @@ export function Editor({ song, onChange, onNewSong, onHome }: EditorProps) {
     [onChange],
   )
 
-  const editPart = (p: Part) => edit(withPart(songRef.current, track, p))
-
-  const apply = (r: EditResult) => {
-    if (r.error) {
-      setMessage(r.error)
-      return false
-    }
-    editPart(r.song)
-    return true
-  }
-
   const switchTrack = (i: number) => {
     setActive(i)
     setSelectedId(null)
     setChordInput(false)
+    setStaffIdx(0)
   }
 
   useEffect(() => {
@@ -95,8 +90,23 @@ export function Editor({ song, onChange, onNewSong, onHome }: EditorProps) {
   }, [message])
 
   // The selection goes away if its note does (undo, overwritten, deleted).
-  const selected = part.notes.find((n) => n.id === selectedId) ?? null
+  const found = parts.map((p, k) => ({ k, n: p.notes.find((n) => n.id === selectedId) })).find((x) => x.n)
+  const selected = found?.n ?? null
+  const selStaff = found?.k ?? staffIdx
+  /** The staff the palette's actions apply to: the selected note's. */
+  const part = parts[Math.min(selStaff, parts.length - 1)]
   const shownChoice = (selected && describeTicks(selected.dur)) || choice
+
+  const editPart = (p: Part, staff = selStaff) => edit(withPart(songRef.current, track, p, staff))
+
+  const apply = (r: EditResult, staff = selStaff) => {
+    if (r.error) {
+      setMessage(r.error)
+      return false
+    }
+    editPart(r.song, staff)
+    return true
+  }
 
   const changeDuration = (c: DurationChoice) => {
     setChoice(c)
@@ -129,22 +139,58 @@ export function Editor({ song, onChange, onNewSong, onHome }: EditorProps) {
     }
   }
 
-  const clef = getClef(part.clef)
-  const range = clefRange(clef)
-  const voice = (spec: ChordSpec, bass: number) => voiceChord(spec, bass, range)
+  const rangeOf = (k: number) => clefRange(getClef(parts[Math.min(k, parts.length - 1)].clef))
+  const voice = (spec: ChordSpec, bass: number, k: number) => voiceChord(spec, bass, rangeOf(k))
+  const midis = (ps: { step: number; alter: number }[]) => ps.map((p) => toMidi(p.step, p.alter))
 
-  const preview = (step: number) => {
+  /** On a grand staff the chord's bass note also goes to the left hand, an octave or more lower. */
+  const leftHand = (bass: { step: number; alter: number }) => {
+    const r = clefRange(getClef('bass'))
+    let step = bass.step - 7
+    while (step > r.hi) step -= 7
+    while (step < r.lo) step += 7
+    return { step, alter: bass.alter }
+  }
+  /** The notes a chord press writes on staff k: [this staff's notes, left-hand note or null]. */
+  const chordNotes = (spec: ChordSpec, bass: number, k: number) => {
+    const notes = voice(spec, bass, k)
+    return { notes, lh: grand && k === 0 ? leftHand(notes[0]) : null }
+  }
+
+  /** Write (or replace) a chord on staff k, and its bass note in the left hand on a grand staff. */
+  const writeChord = (k: number, measure: number, tick: number, dur: number, bass: number) => {
+    const { notes, lh } = chordNotes(chordSpec, bass, k)
+    const r = placeChord(parts[k], measure, tick, dur, notes)
+    if (r.error) {
+      setMessage(r.error)
+      return null
+    }
+    let next = withPart(songRef.current, track, r.song, k)
+    if (lh) {
+      const l = placeChord(partOf(next, track, 1), measure, tick, dur, [lh])
+      if (l.error) setMessage(`Left hand: ${l.error}`)
+      else next = withPart(next, track, l.song, 1)
+    }
+    edit(next)
+    return r.song
+  }
+
+  const preview = (k: number, step: number) => {
     void player.unlock().then(() => {
-      if (chordInput) player.previewChord(part.instrument, voice(chordSpec, step).map((p) => toMidi(p.step, p.alter)), 0.4)
-      else player.preview(part.instrument, toMidi(step, inputAlter ?? keyAlter(letterOf(step), part.fifths)))
+      if (chordInput) {
+        const { notes, lh } = chordNotes(chordSpec, step, k)
+        player.previewChord(parts[k].instrument, midis(lh ? [lh, ...notes] : notes), 0.4)
+      } else player.preview(parts[k].instrument, toMidi(step, inputAlter ?? keyAlter(letterOf(step), parts[k].fifths)))
     })
   }
 
   const previewSpec = (spec: ChordSpec) => {
+    const k = selStaff
     const bass = selected
       ? Math.min(...part.notes.filter((n) => n.measure === selected.measure && n.tick === selected.tick).map((n) => n.step))
-      : clef.bottomStep + 2
-    void player.unlock().then(() => player.previewChord(part.instrument, voice(spec, bass).map((p) => toMidi(p.step, p.alter))))
+      : getClef(parts[k].clef).bottomStep + 2
+    const { notes, lh } = chordNotes(spec, bass, k)
+    void player.unlock().then(() => player.previewChord(part.instrument, midis(lh ? [lh, ...notes] : notes)))
   }
 
   const tie = () => {
@@ -168,8 +214,8 @@ export function Editor({ song, onChange, onNewSong, onHome }: EditorProps) {
     if (selected) {
       const chord = part.notes.filter((n) => n.measure === selected.measure && n.tick === selected.tick)
       const bass = Math.min(...chord.map((n) => n.step))
-      const r = placeChord(part, selected.measure, selected.tick, selected.dur, voice(chordSpec, bass))
-      if (apply(r)) setSelectedId(r.song.notes.find((n) => n.measure === selected.measure && n.tick === selected.tick)?.id ?? null)
+      const written = writeChord(selStaff, selected.measure, selected.tick, selected.dur, bass)
+      if (written) setSelectedId(written.notes.find((n) => n.measure === selected.measure && n.tick === selected.tick)?.id ?? null)
     } else {
       setChordInput(true)
     }
@@ -210,19 +256,27 @@ export function Editor({ song, onChange, onNewSong, onHome }: EditorProps) {
       />
 
       <main className="score">
-        <Staff
-          song={part}
+        <Score
+          parts={parts}
           inputDur={choiceTicks(choice)}
           selectedId={selected?.id ?? null}
-          onSelect={setSelectedId}
-          onPlace={(m, tick, step) => {
-            setSelectedId(null)
-            if (chordInput) apply(placeChord(part, m, tick, choiceTicks(choice), voice(chordSpec, step)))
-            else apply(placeNote(part, m, tick, choiceTicks(choice), step, inputAlter ?? undefined))
+          onSelect={(id, k) => {
+            setSelectedId(id)
+            setStaffIdx(k)
           }}
-          chordInput={chordInput ? { voice: (step) => voice(chordSpec, step), label: specName(chordSpec) } : null}
+          onPlace={(k, m, tick, step) => {
+            setSelectedId(null)
+            setStaffIdx(k)
+            if (chordInput) writeChord(k, m, tick, choiceTicks(choice), step)
+            else apply(placeNote(parts[k], m, tick, choiceTicks(choice), step, inputAlter ?? undefined), k)
+          }}
+          chordInput={
+            chordInput
+              ? (k) => ({ voice: (step) => chordNotes(chordSpec, step, k).notes, label: specName(chordSpec) + (grand && k === 0 ? ' (+ left hand)' : '') })
+              : undefined
+          }
           inputAlter={inputAlter}
-          onMove={(id, step) => editPart(moveNote(part, id, step))}
+          onMove={(k, id, step) => editPart(moveNote(parts[k], id, step), k)}
           onPreview={preview}
           onAddMeasure={() => edit(editAllParts(song, (p) => setMeasures(p, song.measures + 1)))}
           getPlayBeat={getPlayBeat}
@@ -289,7 +343,7 @@ export function Editor({ song, onChange, onNewSong, onHome }: EditorProps) {
         </label>
         <label className="field">
           <span>Sound</span>
-          <InstrumentSelect value={part.instrument} onChange={(id) => editPart(setInstrument(part, id))} />
+          <InstrumentSelect value={part.instrument} onChange={(id) => edit(setTrackInstrument(song, track, id))} />
           <InstrumentStatus id={part.instrument} />
         </label>
       </footer>
@@ -300,18 +354,32 @@ export function Editor({ song, onChange, onNewSong, onHome }: EditorProps) {
             <h2>Track {track + 1}</h2>
             <label>
               Instrument
-              <InstrumentSelect value={part.instrument} onChange={(id) => editPart(setInstrument(part, id))} />
+              <InstrumentSelect value={part.instrument} onChange={(id) => edit(setTrackInstrument(song, track, id))} />
             </label>
-            <label>
-              Clef
-              <select value={part.clef} onChange={(e) => editPart(updateSong(part, { clef: e.target.value as ClefId }))}>
-                {CLEFS.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <button
+              className={`menu-item toggle ${grand ? 'on' : ''}`}
+              aria-pressed={grand}
+              onClick={() => {
+                if (grand && song.tracks[track].notes.some((n) => n.staff) && !confirm('Merge the bass staff into one staff?')) return
+                edit(setTrackGrand(song, track, !grand))
+                setSelectedId(null)
+                setStaffIdx(0)
+              }}
+            >
+              {grand ? '☑' : '☐'} Grand staff (treble + bass)
+            </button>
+            {!grand && (
+              <label>
+                Clef
+                <select value={part.clef} onChange={(e) => editPart(updateSong(part, { clef: e.target.value as ClefId }))}>
+                  {CLEFS.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
             <button className="menu-item" onClick={() => edit(setTrackMuted(song, track, !song.tracks[track].muted))}>
               {song.tracks[track].muted ? '🔊 Unmute track' : '🔇 Mute track'}
             </button>
@@ -371,16 +439,6 @@ export function Editor({ song, onChange, onNewSong, onHome }: EditorProps) {
                 </select>
               </label>
             </div>
-            <label>
-              Clef
-              <select value={clef.id} onChange={(e) => editPart(updateSong(part, { clef: e.target.value as ClefId }))}>
-                {CLEFS.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
-            </label>
             <div className="menu-row">
               <button className="menu-item" onClick={() => edit(editAllParts(song, (p) => setMeasures(p, song.measures + 1)))}>
                 ＋ Add measure

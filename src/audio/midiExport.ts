@@ -2,11 +2,11 @@ import { Midi } from '@tonejs/midi'
 import { getInstrument } from '../music/instruments'
 import type { Song } from '../music/song'
 import { TPQ } from '../music/duration'
-import { partOf, soundingNotes } from '../music/song'
+import { partsOf, soundingNotes } from '../music/song'
 
 /**
- * Build a standard MIDI file for a song: one MIDI track per track, each on its
- * own channel with its instrument. Tied notes are one note; slides become a
+ * Build a standard MIDI file for a song: one MIDI track per track (both staves of a grand
+ * staff together), each on its own channel with its instrument. Tied notes are one note; slides become a
  * note per pitch (MIDI pitch bend only reaches a couple of semitones).
  */
 export function songToMidi(song: Song): Uint8Array {
@@ -22,7 +22,7 @@ export function songToMidi(song: Song): Uint8Array {
     track.name = inst.name
     track.channel = i >= 9 ? i + 1 : i // channel 10 (index 9) is drums
     track.instrument.number = inst.program
-    for (const note of soundingNotes(partOf(song, i))) {
+    for (const note of partsOf(song, i).flatMap(soundingNotes)) {
       const pieces = [{ midi: note.midi, from: 0 }, ...note.bends.map((b) => ({ midi: b.midi, from: b.end }))]
       pieces.forEach((p, k) => {
         const to = pieces[k + 1]?.from ?? note.dur

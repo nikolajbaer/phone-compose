@@ -26,13 +26,17 @@ import {
   setMeasures,
   addTrack,
   partOf,
+  partsOf,
+  setTrackGrand,
+  setTrackInstrument,
+  editAllParts,
   withPart,
   isSlide,
   type Part,
   type Song,
 } from '../src/music/song'
 import { keyAlter, pitchName, posToStep, toMidi } from '../src/music/theory'
-import { layoutSong } from '../src/components/staffLayout'
+import { layoutSong, layoutStaves } from '../src/components/staffLayout'
 import { clefPosToStep, clefRange, getClef } from '../src/music/clefs'
 
 const newSong = (fifths = 0) => partOf(createSong({ title: 'T', tempo: 120, beatsPerMeasure: 4, fifths, instrument: 'square' }), 0)
@@ -439,5 +443,57 @@ describe('tracks', () => {
       [60, 0, 480],
       [67, 480, 480],
     ])
+  })
+})
+
+describe('grand staff', () => {
+  const pianoSong = () => createSong({ title: 'P', tempo: 120, beatsPerMeasure: 4, fifths: 0, instrument: 'piano' })
+
+  it('gives pianos a treble and a bass staff, each its own voice', () => {
+    let song = pianoSong()
+    expect(song.tracks[0].grand).toBe(true)
+    expect(partsOf(song, 0).map((p) => p.clef)).toEqual(['treble', 'bass'])
+    // Right hand: four quarters; left hand: one whole note.
+    let rh = partOf(song, 0, 0)
+    for (let b = 0; b < 4; b++) rh = add(rh, 0, b * Q, Q, 7)
+    song = withPart(song, 0, rh, 0)
+    song = withPart(song, 0, add(partOf(song, 0, 1), 0, 0, 4 * Q, -7), 1)
+    const [top, bottom] = partsOf(song, 0)
+    expect(top.notes).toHaveLength(4)
+    expect(bottom.notes.map((n) => [n.dur, n.staff])).toEqual([[4 * Q, 1]])
+    // Both staves play.
+    const midi = new Midi(songToMidi(song))
+    expect(midi.tracks[0].notes.map((n) => n.midi).sort()).toEqual([48, 72, 72, 72, 72])
+  })
+
+  it('lines up the staves: same measure widths, notes sounding together at the same x', () => {
+    let song = pianoSong()
+    let rh = partOf(song, 0, 0)
+    for (let b = 0; b < 4; b++) rh = add(rh, 0, b * Q, S, 7)
+    song = withPart(song, 0, rh, 0)
+    song = withPart(song, 0, add(partOf(song, 0, 1), 0, 0, 2 * Q, -7), 1)
+    const [a, b] = layoutStaves(partsOf(song, 0))
+    expect(a.measures.map((m) => m.width)).toEqual(b.measures.map((m) => m.width))
+    const xAt = (l: typeof a, tick: number) => l.measures[0].slots.find((s) => s.ev.tick === tick)!.x
+    expect(xAt(a, 0)).toBe(xAt(b, 0))
+    expect(xAt(a, 2 * Q)).toBe(xAt(b, 2 * Q))
+  })
+
+  it('applies key and length changes to both staves', () => {
+    let song = pianoSong()
+    song = withPart(song, 0, add(partOf(song, 0, 1), 3, 0, Q, -8), 1)
+    song = editAllParts(song, (p) => setMeasures(p, 2))
+    expect(song.tracks[0].notes).toHaveLength(0)
+    expect(song.measures).toBe(2)
+  })
+
+  it('switches with the instrument and merges when turned off', () => {
+    let song = setTrackInstrument(pianoSong(), 0, 'violin')
+    expect([song.tracks[0].grand, song.tracks[0].clef]).toEqual([false, 'treble'])
+    song = setTrackInstrument(song, 0, 'piano')
+    song = withPart(song, 0, add(partOf(song, 0, 1), 0, 0, Q, -7), 1)
+    song = setTrackGrand(song, 0, false)
+    expect(partsOf(song, 0)).toHaveLength(1)
+    expect(song.tracks[0].notes[0].staff).toBeUndefined()
   })
 })

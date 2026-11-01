@@ -4,7 +4,8 @@ import type { Chord, Note, Part } from '../music/song'
 import { MAX_POS, MIN_POS, MIDDLE_POS, clampPos, keyAlter, letterOf, pitchName } from '../music/theory'
 import { clefPosToStep, clefStepToPos, getClef, stemUpFor, type ClefDef } from '../music/clefs'
 import { isSlide, tieTarget } from '../music/song'
-import { SPACE, STEP, beamCount, chordLabels, hitSlot, layoutSong, tickToX, type Slot, type SongLayout } from './staffLayout'
+import { SPACE, STEP, beamCount, hitSlot, layoutStaves, tickToX, type Slot, type SongLayout } from './staffLayout'
+import { chordName } from '../music/chords'
 
 // The score: one staff (treble, bass, alto... per the song's clef) drawn in SVG with SMuFL glyphs from the Bravura
 // font. The clef, key and time signature open the line, and the whole line
@@ -69,7 +70,7 @@ function StaffLines({ width }: { width: number }) {
 const KEY_SHARP_POS = [8, 5, 9, 6, 3, 7, 4]
 const KEY_FLAT_POS = [4, 7, 3, 6, 2, 5, 1]
 
-export function StaffHeader({ song }: { song: Part }) {
+export function StaffHeader({ song, zoom = 1 }: { song: Part; zoom?: number }) {
   const clef = getClef(song.clef)
   const n = Math.abs(song.fifths)
   const keyX = 6 + 3.2 * SPACE // clefs are about 2.8 spaces wide
@@ -77,7 +78,7 @@ export function StaffHeader({ song }: { song: Part }) {
   const width = timeX + 2.1 * SPACE
   const digits = (v: number) => String(v).split('').map((d) => GLYPH.timeSig(Number(d))).join('')
   return (
-    <svg className="staff-header" width={width} height={STAFF_HEIGHT}>
+    <svg className="staff-header" width={width * zoom} height={STAFF_HEIGHT * zoom} viewBox={`0 0 ${width} ${STAFF_HEIGHT}`}>
       <StaffLines width={width} />
       <text className="glyph" x={6} y={y(clef.glyphPos)} fontSize={FONT}>
         {clef.glyph}
@@ -254,8 +255,17 @@ interface Press {
   moved: boolean
 }
 
-interface StaffProps {
+interface StaffRowProps {
   song: Part
+  /** This staff's layout, computed together with the other staves of the score. */
+  layout: SongLayout
+  /** Drawing scale (smaller for a grand staff so both staves fit). */
+  zoom: number
+  /** Chord symbols to print above this staff. */
+  labels: { x: number; text: string; key: string }[]
+  /** Print measure numbers (only on the top staff). */
+  numbers: boolean
+  playheadRef: (el: SVGLineElement | null) => void
   /** Length in ticks of the note the palette will write. */
   inputDur: number
   selectedId: string | null
@@ -263,26 +273,21 @@ interface StaffProps {
   onPlace: (measure: number, tick: number, step: number) => void
   onMove: (id: string, step: number) => void
   onPreview: (step: number) => void
-  onAddMeasure: () => void
-  /** Returns the play position in beats, or null when stopped. Polled each frame. */
-  getPlayBeat: () => number | null
   /** Chord input: presses write this chord, voiced with its bass near the pressed pitch. */
   chordInput?: { voice: (bassStep: number) => { step: number; alter: number }[]; label: string } | null
   /** Sharp/flat/natural for notes being written, or null to follow the key. */
   inputAlter?: number | null
 }
 
-export function Staff({ song, inputDur, selectedId, onSelect, onPlace, onMove, onPreview, onAddMeasure, getPlayBeat, chordInput, inputAlter = null }: StaffProps) {
+/** One staff: its header, measures and touch input. */
+function StaffRow(props: StaffRowProps) {
+  const { song, layout, zoom, labels, numbers, playheadRef, inputDur, selectedId, onSelect, onPlace, onMove, onPreview, chordInput, inputAlter = null } = props
   const svgRef = useRef<SVGSVGElement>(null)
-  const scrollRef = useRef<HTMLDivElement>(null)
-  const playheadRef = useRef<SVGLineElement>(null)
   const [press, setPress] = useState<Press | null>(null)
   const pressRef = useRef<Press | null>(null)
   pressRef.current = press
 
-  const layout = useMemo(() => layoutSong(song), [song])
   const geometry = useMemo(() => beamGeometry(layout), [layout])
-  const labels = useMemo(() => chordLabels(layout), [layout])
   const width = layout.width
   const clef = layout.clef
   const posToStep = (pos: number) => clefPosToStep(clef, pos)
@@ -291,38 +296,10 @@ export function Staff({ song, inputDur, selectedId, onSelect, onPlace, onMove, o
   const ghostAcc = (n: Note) => n.alter !== keyAlter(letterOf(n.step), song.fifths)
   const ties = useMemo(() => tieCurves(song, layout, geometry.stems), [song, layout, geometry])
 
-  // Playhead: moved directly on the DOM each frame, and the score follows it.
-  useEffect(() => {
-    let raf = 0
-    const tick = () => {
-      const line = playheadRef.current
-      const beat = getPlayBeat()
-      if (line) {
-        if (beat === null) {
-          line.style.display = 'none'
-        } else {
-          const x = tickToX(song, layout, beat * TPQ)
-          line.style.display = ''
-          line.setAttribute('transform', `translate(${x},0)`)
-          const sc = scrollRef.current
-          const svgLeft = svgRef.current?.getBoundingClientRect().left ?? 0
-          const scLeft = sc?.getBoundingClientRect().left ?? 0
-          const xIn = x + svgLeft - scLeft + (sc?.scrollLeft ?? 0)
-          if (sc && (xIn < sc.scrollLeft + 20 || xIn > sc.scrollLeft + sc.clientWidth - 40)) {
-            sc.scrollLeft = Math.max(0, xIn - 40)
-          }
-        }
-      }
-      raf = requestAnimationFrame(tick)
-    }
-    raf = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(raf)
-  }, [getPlayBeat, song, layout])
-
   const locate = (e: React.PointerEvent) => {
     const r = svgRef.current!.getBoundingClientRect()
-    const hit = hitSlot(layout, e.clientX - r.left)
-    const pos = clampPos(Math.round((BOTTOM_Y - (e.clientY - r.top)) / STEP))
+    const hit = hitSlot(layout, (e.clientX - r.left) / zoom)
+    const pos = clampPos(Math.round((BOTTOM_Y - (e.clientY - r.top) / zoom) / STEP))
     return hit ? { measure: hit.measure.index, slot: hit.slot, pos } : null
   }
 
@@ -377,15 +354,14 @@ export function Staff({ song, inputDur, selectedId, onSelect, onPlace, onMove, o
   const ghostOnRest = press?.slot.ev.kind === 'rest'
 
   return (
-    <div className="staff-row">
-      <div className="staff-scroll" ref={scrollRef}>
-        <div className="staff-inner">
-          <StaffHeader song={song} />
+    <div className="staff-line">
+          <StaffHeader song={song} zoom={zoom} />
           <svg
             ref={svgRef}
             className="staff-measures"
-            width={width}
-            height={STAFF_HEIGHT}
+            width={width * zoom}
+            height={STAFF_HEIGHT * zoom}
+            viewBox={`0 0 ${width} ${STAFF_HEIGHT}`}
             onPointerDown={onPointerDown}
             onPointerMove={onPointerMove}
             onPointerUp={onPointerUp}
@@ -411,9 +387,11 @@ export function Staff({ song, inputDur, selectedId, onSelect, onPlace, onMove, o
             {layout.measures.map((m) => (
               <g key={m.index}>
                 <line className="barline" x1={m.x + m.width - 0.5} x2={m.x + m.width - 0.5} y1={y(8)} y2={y(0)} />
-                <text className="measure-num" x={m.x + 4} y={12}>
-                  {m.index + 1}
-                </text>
+                {numbers && (
+                  <text className="measure-num" x={m.x + 4} y={12}>
+                    {m.index + 1}
+                  </text>
+                )}
                 {m.slots.map((s) =>
                   s.ev.kind === 'rest' ? (
                     !(press?.slot === s) && <RestGlyph key={s.ev.tick} slot={s} />
@@ -496,11 +474,6 @@ export function Staff({ song, inputDur, selectedId, onSelect, onPlace, onMove, o
             )}
             <line ref={playheadRef} className="playhead" x1={0} x2={0} y1={0} y2={STAFF_HEIGHT} style={{ display: 'none' }} />
           </svg>
-          <button className="add-measure" style={{ height: STAFF_HEIGHT }} onClick={onAddMeasure} aria-label="Add measure">
-            +
-          </button>
-        </div>
-      </div>
     </div>
   )
 }
@@ -574,4 +547,143 @@ function tieCurves(song: Part, layout: SongLayout, stems: Map<Slot, StemSpec>) {
     out.push({ key: n.id, d })
   }
   return out
+}
+
+// --- the score: one or more staves scrolling together -----------------------------
+
+/** Staff callbacks, told which staff (0 = top) they came from. */
+interface ScoreProps {
+  /** The staves to show, top to bottom (two for a grand staff). */
+  parts: Part[]
+  inputDur: number
+  selectedId: string | null
+  onSelect: (id: string | null, staff: number) => void
+  onPlace: (staff: number, measure: number, tick: number, step: number) => void
+  onMove: (staff: number, id: string, step: number) => void
+  onPreview: (staff: number, step: number) => void
+  onAddMeasure: () => void
+  /** Returns the play position in beats, or null when stopped. Polled each frame. */
+  getPlayBeat: () => number | null
+  /** Chord input for a staff, or null. */
+  chordInput?: (staff: number) => StaffRowProps['chordInput']
+  inputAlter?: number | null
+}
+
+const GRAND_ZOOM = 0.66
+
+/**
+ * Chord symbols over the top staff: the notes starting together on every
+ * staff are named as one chord.
+ */
+function scoreLabels(layouts: SongLayout[]) {
+  const out: { x: number; text: string; key: string }[] = []
+  layouts[0].measures.forEach((m, mi) => {
+    const byTick = new Map<number, { x: number; notes: Note[] }>()
+    layouts.forEach((l) => {
+      for (const s of l.measures[mi].slots) {
+        if (s.ev.kind !== 'chord') continue
+        const at = byTick.get(s.ev.tick) ?? { x: s.headX, notes: [] }
+        at.notes.push(...s.ev.notes)
+        byTick.set(s.ev.tick, at)
+      }
+    })
+    for (const [tick, { x, notes }] of byTick) {
+      const text = chordName(notes)
+      if (text) out.push({ x, text, key: `${m.index}:${tick}` })
+    }
+  })
+  return out
+}
+
+export function Score(props: ScoreProps) {
+  const { parts, getPlayBeat, onAddMeasure, chordInput } = props
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const playheads = useRef<(SVGLineElement | null)[]>([])
+  const layouts = useMemo(() => layoutStaves(parts), [parts])
+  const labels = useMemo(() => scoreLabels(layouts), [layouts])
+  const grand = parts.length > 1
+  const zoom = grand ? GRAND_ZOOM : 1
+
+  // Playhead: moved directly on the DOM each frame, and the score follows it.
+  useEffect(() => {
+    let raf = 0
+    const tick = () => {
+      const beat = getPlayBeat()
+      const x = beat === null ? null : tickToX(parts[0], layouts[0], beat * TPQ)
+      for (const line of playheads.current) {
+        if (!line) continue
+        if (x === null) line.style.display = 'none'
+        else {
+          line.style.display = ''
+          line.setAttribute('transform', `translate(${x},0)`)
+        }
+      }
+      const sc = scrollRef.current
+      const svg = playheads.current[0]?.ownerSVGElement
+      if (x !== null && sc && svg) {
+        const xIn = x * zoom + svg.getBoundingClientRect().left - sc.getBoundingClientRect().left + sc.scrollLeft
+        if (xIn < sc.scrollLeft + 20 || xIn > sc.scrollLeft + sc.clientWidth - 40) sc.scrollLeft = Math.max(0, xIn - 40)
+      }
+      raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [getPlayBeat, parts, layouts, zoom])
+
+  const height = parts.length * STAFF_HEIGHT * zoom
+  // The brace spans from the top line of the first staff to the bottom line of the last.
+  const braceTop = y(8) * zoom
+  const braceBottom = (STAFF_HEIGHT * (parts.length - 1) + y(0)) * zoom
+  return (
+    <div className="staff-row">
+      <div className="staff-scroll" ref={scrollRef}>
+        <div className="staff-inner">
+          {grand && (
+            <svg className="brace" width={18} height={height} aria-hidden>
+              <path d={bracePath(16, braceTop, braceBottom)} />
+              <line x1={17} x2={17} y1={braceTop} y2={braceBottom} className="system-line" />
+            </svg>
+          )}
+          <div className="staff-stack">
+            {parts.map((part, k) => (
+              <StaffRow
+                key={k}
+                song={part}
+                layout={layouts[k]}
+                zoom={zoom}
+                labels={k === 0 ? labels : []}
+                numbers={k === 0}
+                playheadRef={(el) => (playheads.current[k] = el)}
+                inputDur={props.inputDur}
+                selectedId={props.selectedId}
+                onSelect={(id) => props.onSelect(id, k)}
+                onPlace={(m, tick, step) => props.onPlace(k, m, tick, step)}
+                onMove={(id, step) => props.onMove(k, id, step)}
+                onPreview={(step) => props.onPreview(k, step)}
+                chordInput={chordInput?.(k) ?? null}
+                inputAlter={props.inputAlter}
+              />
+            ))}
+          </div>
+          <button className="add-measure" style={{ height }} onClick={onAddMeasure} aria-label="Add measure">
+            +
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/** A curly brace from top to bottom, `w` wide, thick in the middle of each half. */
+function bracePath(w: number, top: number, bottom: number) {
+  const h = bottom - top
+  const m = top + h / 2
+  return [
+    `M${w},${top}`,
+    `C${w * 0.15},${top + h * 0.06} ${w * 0.95},${m - h * 0.1} 0,${m}`,
+    `C${w * 0.95},${m + h * 0.1} ${w * 0.15},${bottom - h * 0.06} ${w},${bottom}`,
+    `C${w * 0.5},${bottom - h * 0.08} ${w * 1.5},${m + h * 0.12} ${w * 0.3},${m}`,
+    `C${w * 1.5},${m - h * 0.12} ${w * 0.5},${top + h * 0.08} ${w},${top}`,
+    'Z',
+  ].join(' ')
 }

@@ -14,6 +14,8 @@ export interface InstrumentDef {
   id: string
   /** The clef this instrument is usually written in. */
   clef: ClefId
+  /** Written on a grand staff (treble and bass braced together) by default. */
+  grand?: boolean
   name: string
   group: 'Instruments' | 'Synths'
   program: number
@@ -38,9 +40,9 @@ const synth = (id: 'square' | 'triangle' | 'sawtooth' | 'bell' | 'organ', name: 
 })
 
 export const INSTRUMENTS: InstrumentDef[] = [
-  { id: 'piano', clef: 'treble', name: 'Grand piano', group: 'Instruments', program: 0, source: { kind: 'piano' } },
-  sf('electric_piano', 'Electric piano', 4, 'electric_piano_1'),
-  sf('harpsichord', 'Harpsichord', 6),
+  { id: 'piano', clef: 'treble', grand: true, name: 'Grand piano', group: 'Instruments', program: 0, source: { kind: 'piano' } },
+  { ...sf('electric_piano', 'Electric piano', 4, 'electric_piano_1'), grand: true },
+  { ...sf('harpsichord', 'Harpsichord', 6), grand: true },
   sf('music_box', 'Music box', 10),
   sf('marimba', 'Marimba', 12),
   sf('nylon_guitar', 'Nylon guitar', 24, 'acoustic_guitar_nylon', 'treble8vb'),

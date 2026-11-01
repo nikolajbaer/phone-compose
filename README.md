@@ -40,6 +40,12 @@ you write on by tapping, in the spirit of BeepBox but with real notes instead of
 - **Clefs**: treble, bass, alto, treble 8vb (guitar) and bass 8vb (double bass). Choosing an instrument
   switches to its usual clef (viola → alto, cello → bass, guitar → treble 8vb, acoustic bass → bass 8vb);
   the ☰ menu can override it. Notes keep their pitch when the clef changes.
+- **Grand staff**: pianos (and electric piano, harpsichord) are written on a treble and a bass staff
+  braced together, each its own voice with its own rhythm (right and left hand), lined up so notes that
+  sound together sit together. It can be turned on or off in the track's settings. With chord input,
+  tapping the treble staff writes the chord in the right hand and drops its bass note (the inversion's
+  bass) an octave or so lower into the bass clef; tapping the bass staff writes the whole chord there.
+  The chord symbol names what both hands play together.
 - **Editing**: tap a note to select it; the palette then changes that chord's length and 🗑 deletes the
   note. Drag a note up or down to move it. Undo with ↶.
 - **Playback**: play/stop, looping, a playhead that the score follows, and a tempo stepper. Timing comes
@@ -89,8 +95,10 @@ repository for its terms before distributing it in other ways.
 - `src/audio/player.ts` — playback and note previews (Tone.js timing, smplr or Tone.js sound). Slides on
   sampled instruments ramp the pitch of smplr's audio source, caught as smplr creates it.
 - `src/audio/midiExport.ts` — MIDI file export.
-- `src/components/staffLayout.ts` — horizontal layout, beaming and triplet groups.
-- `src/components/Staff.tsx` — the notation view and its touch input.
+- `src/components/staffLayout.ts` — horizontal layout (staves of a grand staff aligned), beaming and
+  triplet groups.
+- `src/components/Staff.tsx` — the notation view: `Score` (one or two staves scrolling together) and
+  `StaffRow` (drawing and touch input for one staff).
 - `src/components/DurationPalette.tsx` — the note-length palette.
 - `src/components/ChordPicker.tsx` — the chord picker sheet.
 - `src/components/TrackBar.tsx` — the track tabs.

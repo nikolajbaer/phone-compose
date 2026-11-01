@@ -2,7 +2,7 @@ import * as Tone from 'tone'
 import { CacheStorage, Soundfont, SplendidGrandPiano } from 'smplr'
 import { getInstrument, type InstrumentDef } from '../music/instruments'
 import type { Song } from '../music/song'
-import { partOf, soundingNotes } from '../music/song'
+import { partsOf, soundingNotes } from '../music/song'
 import { TPQ } from '../music/duration'
 import { toMidi } from '../music/theory'
 import { clefRange, getClef } from '../music/clefs'
@@ -254,7 +254,7 @@ class Player {
     song.tracks.forEach((track, i) => {
       if (track.muted) return
       const voice = this.voice(track.instrument)
-      for (const note of soundingNotes(partOf(song, i))) {
+      for (const note of partsOf(song, i).flatMap(soundingNotes)) {
         const seconds = sec(note.dur) * 0.95
         const glides = note.bends.map((b) => ({ start: sec(b.start), end: sec(b.end), midi: b.midi }))
         transport.schedule((time) => voice.play(note.midi, time, seconds, glides), `${Math.round(note.start * ticksPerTick)}i`)

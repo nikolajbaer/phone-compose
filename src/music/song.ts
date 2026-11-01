@@ -25,6 +25,8 @@ export interface Note {
    * a tie if it has the same pitch, a slide (glissando) if not.
    */
   tieTo?: string
+  /** On a grand staff: 1 for the lower (bass) staff; absent for the upper one. */
+  staff?: number
 }
 
 /** An id from INSTRUMENTS (instruments.ts). */
@@ -36,6 +38,8 @@ export interface Track {
   clef: ClefId
   notes: Note[]
   muted?: boolean
+  /** Two staves, treble over bass, each its own voice (a piano's right and left hand). */
+  grand?: boolean
 }
 
 export interface Song {
@@ -76,7 +80,8 @@ export interface NewSongOptions {
 export const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36)
 
 export function newTrack(instrument: InstrumentId, clef?: ClefId): Track {
-  return { id: uid(), instrument, clef: clef ?? getInstrument(instrument).clef, notes: [] }
+  const def = getInstrument(instrument)
+  return { id: uid(), instrument, clef: clef ?? def.clef, notes: [], ...(def.grand ? { grand: true } : {}) }
 }
 
 export function createSong(opts: NewSongOptions): Song {
@@ -96,7 +101,13 @@ export function createSong(opts: NewSongOptions): Song {
 
 // --- song <-> part -------------------------------------------------------------
 
-export function partOf(song: Song, track: number): Part {
+/** How many staves a track is written on: two for a grand staff. */
+export const staffCount = (t: Track) => (t.grand ? 2 : 1)
+
+const onStaff = (n: Note, staff: number) => (n.staff ?? 0) === staff
+
+/** One staff of a track (staff 1 is the bass staff of a grand staff). */
+export function partOf(song: Song, track: number, staff = 0): Part {
   const t = song.tracks[track] ?? song.tracks[0]
   return {
     tempo: song.tempo,
@@ -104,30 +115,62 @@ export function partOf(song: Song, track: number): Part {
     fifths: song.fifths,
     measures: song.measures,
     instrument: t.instrument,
-    clef: t.clef,
-    notes: t.notes,
+    clef: t.grand ? (staff ? 'bass' : 'treble') : t.clef,
+    notes: t.grand ? t.notes.filter((n) => onStaff(n, staff)) : t.notes,
     updatedAt: song.updatedAt,
   }
 }
 
+/** All the staves of a track. */
+export const partsOf = (song: Song, track: number): Part[] =>
+  Array.from({ length: staffCount(song.tracks[track] ?? song.tracks[0]) }, (_, s) => partOf(song, track, s))
+
 /** Write an edited part back into its track (and the shared settings into the song). */
-export function withPart(song: Song, track: number, part: Part): Song {
+export function withPart(song: Song, track: number, part: Part, staff = 0): Song {
   return {
     ...song,
     tempo: part.tempo,
     beatsPerMeasure: part.beatsPerMeasure,
     fifths: part.fifths,
     measures: part.measures,
-    tracks: song.tracks.map((t, i) => (i === track ? { ...t, instrument: part.instrument, clef: part.clef, notes: part.notes } : t)),
+    tracks: song.tracks.map((t, i) => {
+      if (i !== track) return t
+      if (!t.grand) return { ...t, instrument: part.instrument, clef: part.clef, notes: part.notes }
+      const mine = part.notes.map(({ staff: _s, ...n }) => (staff ? { ...n, staff } : n))
+      return { ...t, instrument: part.instrument, notes: [...t.notes.filter((n) => !onStaff(n, staff)), ...mine] }
+    }),
     updatedAt: Date.now(),
   }
 }
 
-/** Apply a part edit to every track (for key, meter and length changes). */
+/** Apply a part edit to every staff of every track (for key, meter and length changes). */
 export function editAllParts(song: Song, f: (p: Part) => Part): Song {
   let out = song
-  song.tracks.forEach((_, i) => (out = withPart(out, i, f(partOf(out, i)))))
+  song.tracks.forEach((t, i) => {
+    for (let s = 0; s < staffCount(t); s++) out = withPart(out, i, f(partOf(out, i, s)), s)
+  })
   return out
+}
+
+/** Change a track's instrument, taking that instrument's usual clef and staff. */
+export function setTrackInstrument(song: Song, track: number, instrument: InstrumentId): Song {
+  const def = getInstrument(instrument)
+  return {
+    ...song,
+    tracks: song.tracks.map((t, i) => (i === track ? withGrand({ ...t, instrument, clef: def.clef }, !!def.grand) : t)),
+    updatedAt: Date.now(),
+  }
+}
+
+/** Turn a track's grand staff on (its notes start on the treble staff) or off (both staves merge). */
+export function setTrackGrand(song: Song, track: number, grand: boolean): Song {
+  return { ...song, tracks: song.tracks.map((t, i) => (i === track ? withGrand(t, grand) : t)), updatedAt: Date.now() }
+}
+
+function withGrand(t: Track, grand: boolean): Track {
+  if (!!t.grand === grand) return t
+  if (grand) return { ...t, grand: true }
+  return { ...t, grand: false, clef: 'treble', notes: t.notes.map(({ staff: _s, ...n }) => n) }
 }
 
 const TRACK_ORDER: InstrumentId[] = ['strings', 'acoustic_bass', 'piano', 'flute', 'cello', 'nylon_guitar']
