@@ -1,7 +1,8 @@
 import { Midi } from '@tonejs/midi'
 import { getInstrument } from '../music/instruments'
 import type { Song } from '../music/song'
-import { absoluteBeat, noteMidi } from '../music/song'
+import { TPQ } from '../music/duration'
+import { absoluteTick, noteMidi } from '../music/song'
 
 /** Build a standard MIDI file (type 1, one track) for a song. */
 export function songToMidi(song: Song): Uint8Array {
@@ -14,8 +15,14 @@ export function songToMidi(song: Song): Uint8Array {
   const track = midi.addTrack()
   track.name = song.title
   track.instrument.number = getInstrument(song.instrument).program
-  for (const note of [...song.notes].sort((a, b) => absoluteBeat(song, a) - absoluteBeat(song, b))) {
-    track.addNote({ midi: noteMidi(note), ticks: absoluteBeat(song, note) * ppq, durationTicks: ppq, velocity: 0.8 })
+  const scale = ppq / TPQ
+  for (const note of [...song.notes].sort((a, b) => absoluteTick(song, a) - absoluteTick(song, b))) {
+    track.addNote({
+      midi: noteMidi(note),
+      ticks: Math.round(absoluteTick(song, note) * scale),
+      durationTicks: Math.round(note.dur * scale),
+      velocity: 0.8,
+    })
   }
   return midi.toArray()
 }

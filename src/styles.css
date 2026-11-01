@@ -113,3 +113,18 @@ button, input, select { font: inherit; color: inherit; }
 .menu-item { flex: 1; text-align: left; background: var(--panel-2); border: 0; border-radius: 10px; padding: 14px 16px; font-size: 1rem; cursor: pointer; }
 .menu-item:disabled { opacity: 0.35; }
 .menu-item.danger { color: var(--danger); }
+
+/* note-length palette */
+.palette { display: flex; align-items: center; justify-content: center; gap: 4px; padding: 6px 8px; background: var(--panel); border-top: 1px solid #2c2c3e; flex-wrap: nowrap; }
+.pal-btn { width: 40px; height: 46px; display: flex; align-items: center; justify-content: center; background: var(--panel-2); border: 1px solid #3a3a50; border-radius: 10px; padding: 0; cursor: pointer; font-size: 1.1rem; }
+.pal-btn .glyph { fill: var(--ink); }
+.pal-btn.on { background: var(--accent); border-color: var(--accent); }
+.pal-btn.on .glyph { fill: #0b1a22; }
+.pal-btn:disabled { opacity: 0.3; }
+.pal-sep { width: 1px; height: 30px; background: #3a3a50; margin: 0 2px; }
+.hint.error { color: var(--danger); }
+.note.selected { fill: var(--accent); }
+.beam { fill: var(--ink); }
+.tuplet polyline { stroke: var(--ink); stroke-width: 1.4; }
+.tuplet .glyph { fill: var(--ink); }
+.chord-label { fill: var(--accent-2); font-size: 15px; font-weight: 700; font-family: system-ui, sans-serif; }

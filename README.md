@@ -11,10 +11,16 @@ you write on by tapping, in the spirit of BeepBox but with real notes instead of
 - **The staff**: treble clef, key signature and time signature, drawn in SVG with the
   [Bravura](https://github.com/steinbergmedia/bravura) SMuFL font. Measures scroll sideways; the `+` at the
   end adds a measure. Empty beats show quarter rests.
-- **Quarter notes**: press a beat and a ghost note with its pitch name appears; slide up or down to pick
-  the pitch, let go to place it (sounds as you go). Pitches follow the key signature. Several notes on one
-  beat make a chord (seconds are engraved on both sides of the stem). Tap a note to remove it, or drag it
-  up and down to move it. Undo with ↶.
+- **Note lengths, MuseScore style**: a palette under the score picks whole, half, quarter, eighth or
+  sixteenth, plus dotted or triplet. Empty beats show rests: press a rest and a ghost note of the chosen
+  length appears with its pitch name; slide up or down to pick the pitch, let go to write it (it sounds as
+  you go). A longer note overwrites what it covers; a note that would cross the barline is refused.
+  Pitches follow the key signature. Eighths and sixteenths in a beat are beamed, triplets get a 3.
+- **Chords**: press on an existing note's column to add a pitch to it (seconds are engraved on both sides
+  of the stem). Chord symbols (C, Am7, G7/B…) are printed above the staff when three or more different
+  notes sound together.
+- **Editing**: tap a note to select it; the palette then changes that chord's length and 🗑 deletes the
+  note. Drag a note up or down to move it. Undo with ↶.
 - **Playback**: play/stop, looping, a playhead that the score follows, and a tempo stepper. Timing comes
   from the [Tone.js](https://tonejs.github.io/) Transport.
 - **Real instruments** via [smplr](https://github.com/danigb/smplr): a grand piano (Splendid Grand Piano)
@@ -50,12 +56,17 @@ repository for its terms before distributing it in other ways.
 ## Layout
 
 - `src/music/theory.ts` — pitch math: diatonic steps, key signatures, staff positions.
-- `src/music/song.ts` — the song model and pure editing functions (add / move / remove notes, key, meter).
+- `src/music/duration.ts` — note lengths in ticks (48 per quarter), dotted/triplet values, rest filling.
+- `src/music/chords.ts` — chord symbol naming.
+- `src/music/song.ts` — the song model and pure editing functions (place / move / remove notes, change
+  lengths, key, meter). Songs saved before note lengths existed are upgraded on load.
 - `src/music/storage.ts` — saving songs in localStorage.
 - `src/music/instruments.ts` — the instrument list: smplr sample sets, synths, General MIDI programs.
 - `src/audio/player.ts` — playback and note previews (Tone.js timing, smplr or Tone.js sound).
 - `src/audio/midiExport.ts` — MIDI file export.
+- `src/components/staffLayout.ts` — horizontal layout, beaming and triplet groups.
 - `src/components/Staff.tsx` — the notation view and its touch input.
+- `src/components/DurationPalette.tsx` — the note-length palette.
 - `src/components/Editor.tsx`, `Home.tsx`, `NewSongForm.tsx` — screens and menus.
 
 Notes store a diatonic step plus an alteration rather than a MIDI number, so the score can always be

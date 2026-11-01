@@ -1,0 +1,165 @@
+import { chordName } from '../music/chords'
+import { TPQ, describeTicks } from '../music/duration'
+import type { MeasureEvent, Song } from '../music/song'
+import { measureEvents, measureTicks } from '../music/song'
+import { MIDDLE_POS, keyAlter, letterOf, stepToPos } from '../music/theory'
+
+// Horizontal layout of the score. Each event (chord or rest) gets a slot whose
+// width grows with its length, so short notes stay wide enough to tap.
+// Eighths and shorter inside one beat are beamed together.
+
+export const SPACE = 24 // staff space in px; Bravura is sized 4 spaces to the em
+export const STEP = SPACE / 2
+export const MEASURE_PAD_L = 14
+export const MEASURE_PAD_R = 6
+const ACC_ROOM = 0.9 * SPACE
+
+export interface Slot {
+  ev: MeasureEvent
+  /** Left edge of the tappable slot. */
+  x: number
+  w: number
+  /** Left edge of the notehead (or rest glyph). */
+  headX: number
+  /** Index of the beam group this chord belongs to, if beamed. */
+  beam?: number
+}
+
+export interface BeamGroup {
+  slots: Slot[]
+  up: boolean
+}
+
+export interface TupletGroup {
+  slots: Slot[]
+}
+
+export interface MeasureLayout {
+  index: number
+  x: number
+  width: number
+  slots: Slot[]
+  beams: BeamGroup[]
+  tuplets: TupletGroup[]
+}
+
+export interface SongLayout {
+  measures: MeasureLayout[]
+  width: number
+}
+
+export function slotWidth(ev: MeasureEvent, fifths: number): number {
+  let w = 44 + 34 * Math.sqrt(ev.dur / TPQ)
+  const d = describeTicks(ev.dur)
+  if (d?.dotted) w += 0.6 * SPACE
+  if (ev.kind === 'chord' && ev.notes.some((n) => n.alter !== keyAlter(letterOf(n.step), fifths))) w += ACC_ROOM
+  return Math.round(w)
+}
+
+const beamCount = (dur: number) => {
+  const base = describeTicks(dur)?.base
+  return base === 'eighth' ? 1 : base === 'sixteenth' ? 2 : 0
+}
+export { beamCount }
+
+/** Whether a chord's stem points up: the note farthest from the middle line decides. */
+export function stemUp(steps: number[]): boolean {
+  const poss = steps.map(stepToPos)
+  return MIDDLE_POS - Math.min(...poss) >= Math.max(...poss) - MIDDLE_POS
+}
+
+export function layoutSong(song: Song): SongLayout {
+  const measures: MeasureLayout[] = []
+  let x = 0
+  for (let m = 0; m < song.measures; m++) {
+    const events = measureEvents(song, m)
+    const slots: Slot[] = []
+    let sx = x + MEASURE_PAD_L
+    for (const ev of events) {
+      const w = slotWidth(ev, song.fifths)
+      const hasAcc = ev.kind === 'chord' && ev.notes.some((n) => n.alter !== keyAlter(letterOf(n.step), song.fifths))
+      slots.push({ ev, x: sx, w, headX: sx + 8 + (hasAcc ? ACC_ROOM : 0) })
+      sx += w
+    }
+    const width = sx + MEASURE_PAD_R - x
+
+    // Beams: runs of beamable chords within one beat.
+    const beams: BeamGroup[] = []
+    let run: Slot[] = []
+    const flush = () => {
+      if (run.length >= 2) {
+        const steps = run.flatMap((s) => (s.ev.kind === 'chord' ? s.ev.notes.map((n) => n.step) : []))
+        const g = beams.length
+        run.forEach((s) => (s.beam = g))
+        beams.push({ slots: run, up: stemUp(steps) })
+      }
+      run = []
+    }
+    for (const s of slots) {
+      const beat = Math.floor(s.ev.tick / TPQ)
+      const prevBeat = run.length ? Math.floor(run[0].ev.tick / TPQ) : beat
+      if (s.ev.kind !== 'chord' || beamCount(s.ev.dur) === 0 || beat !== prevBeat) flush()
+      if (s.ev.kind === 'chord' && beamCount(s.ev.dur) > 0) run.push(s)
+    }
+    flush()
+
+    // Tuplets: runs of triplet-valued events.
+    const tuplets: TupletGroup[] = []
+    let tg: Slot[] = []
+    const endTuplet = () => {
+      if (tg.length) tuplets.push({ slots: tg })
+      tg = []
+    }
+    for (const s of slots) {
+      const trip = s.ev.kind === 'rest' ? s.ev.triplet : describeTicks(s.ev.dur)?.triplet
+      if (!trip) {
+        endTuplet()
+        continue
+      }
+      // A triplet group lasts as long as three of its first note: close it when full.
+      const sum = tg.reduce((a, t) => a + t.ev.dur, 0)
+      if (tg.length && sum >= 3 * tg[0].ev.dur) endTuplet()
+      tg.push(s)
+    }
+    endTuplet()
+
+    measures.push({ index: m, x, width, slots, beams, tuplets })
+    x += width
+  }
+  return { measures, width: x }
+}
+
+/** The slot under an x coordinate. */
+export function hitSlot(layout: SongLayout, px: number): { measure: MeasureLayout; slot: Slot } | null {
+  const measure = layout.measures.find((m) => px >= m.x && px < m.x + m.width) ?? layout.measures[layout.measures.length - 1]
+  if (!measure) return null
+  const slot =
+    measure.slots.find((s) => px >= s.x && px < s.x + s.w) ??
+    (px < measure.slots[0].x ? measure.slots[0] : measure.slots[measure.slots.length - 1])
+  return { measure, slot }
+}
+
+/** x of a play position, in ticks from the start of the song. */
+export function tickToX(song: Song, layout: SongLayout, tick: number): number {
+  const len = measureTicks(song)
+  const m = Math.min(layout.measures.length - 1, Math.floor(tick / len))
+  const measure = layout.measures[m]
+  const local = tick - m * len
+  for (const s of measure.slots) {
+    if (local >= s.ev.tick && local < s.ev.tick + s.ev.dur) return s.headX + ((local - s.ev.tick) / s.ev.dur) * s.w
+  }
+  return measure.x + measure.width
+}
+
+/** Chord symbols to print above the staff. */
+export function chordLabels(layout: SongLayout): { x: number; text: string; key: string }[] {
+  const out: { x: number; text: string; key: string }[] = []
+  for (const m of layout.measures) {
+    for (const s of m.slots) {
+      if (s.ev.kind !== 'chord') continue
+      const text = chordName(s.ev.notes)
+      if (text) out.push({ x: s.headX, text, key: `${m.index}:${s.ev.tick}` })
+    }
+  }
+  return out
+}

@@ -2,7 +2,8 @@ import * as Tone from 'tone'
 import { CacheStorage, Soundfont, SplendidGrandPiano } from 'smplr'
 import { getInstrument, type InstrumentDef } from '../music/instruments'
 import type { Song } from '../music/song'
-import { noteMidi } from '../music/song'
+import { absoluteTick, noteMidi } from '../music/song'
+import { TPQ } from '../music/duration'
 import { MAX_POS, MIN_POS, posToStep, toMidi } from '../music/theory'
 
 // Plays a Song. Timing comes from the Tone.js Transport: notes are scheduled
@@ -165,9 +166,11 @@ class Player {
     transport.loopEnd = `${song.measures}:0:0`
     const voice = this.voice(song.instrument)
     const beatSeconds = 60 / song.tempo
+    const ticksPerTick = transport.PPQ / TPQ
     for (const note of song.notes) {
       const midi = noteMidi(note)
-      transport.schedule((time) => voice.play(midi, time, beatSeconds * 0.95), `${note.measure}:${note.beat}:0`)
+      const seconds = (note.dur / TPQ) * beatSeconds * 0.95
+      transport.schedule((time) => voice.play(midi, time, seconds), `${Math.round(absoluteTick(song, note) * ticksPerTick)}i`)
     }
   }
 

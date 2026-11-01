@@ -2,9 +2,11 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { player } from '../audio/player'
 import { downloadMidi } from '../audio/midiExport'
 import type { Song } from '../music/song'
-import { addNote, moveNote, removeNote, setBeatsPerMeasure, setKey, setMeasures, updateSong } from '../music/song'
+import { moveNote, placeNote, removeNote, setBeatsPerMeasure, setChordDuration, setKey, setMeasures, updateSong, type EditResult } from '../music/song'
+import { choiceTicks, describeTicks, type DurationChoice } from '../music/duration'
 import { KEYS, keyAlter, letterOf, toMidi } from '../music/theory'
 import { InstrumentSelect, InstrumentStatus } from './InstrumentSelect'
+import { DurationPalette } from './DurationPalette'
 import { Staff } from './Staff'
 
 interface EditorProps {
@@ -17,6 +19,9 @@ interface EditorProps {
 export function Editor({ song, onChange, onNewSong, onHome }: EditorProps) {
   const [playing, setPlaying] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
+  const [choice, setChoice] = useState<DurationChoice>({ base: 'quarter', dotted: false, triplet: false })
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [message, setMessage] = useState<string | null>(null)
   const history = useRef<Song[]>([])
   const songRef = useRef(song)
   songRef.current = song
@@ -30,6 +35,30 @@ export function Editor({ song, onChange, onNewSong, onHome }: EditorProps) {
     },
     [onChange],
   )
+
+  const apply = (r: EditResult) => {
+    if (r.error) {
+      setMessage(r.error)
+      return false
+    }
+    edit(r.song)
+    return true
+  }
+
+  useEffect(() => {
+    if (!message) return
+    const t = setTimeout(() => setMessage(null), 2500)
+    return () => clearTimeout(t)
+  }, [message])
+
+  // The selection goes away if its note does (undo, overwritten, deleted).
+  const selected = song.notes.find((n) => n.id === selectedId) ?? null
+  const shownChoice = (selected && describeTicks(selected.dur)) || choice
+
+  const changeDuration = (c: DurationChoice) => {
+    setChoice(c)
+    if (selected) apply(setChordDuration(song, selected.id, choiceTicks(c)))
+  }
 
   const undo = () => {
     const prev = history.current.pop()
@@ -87,15 +116,35 @@ export function Editor({ song, onChange, onNewSong, onHome }: EditorProps) {
       <main className="score">
         <Staff
           song={song}
-          onAdd={(m, b, step) => edit(addNote(song, m, b, step))}
-          onRemove={(id) => edit(removeNote(song, id))}
+          inputDur={choiceTicks(choice)}
+          selectedId={selected?.id ?? null}
+          onSelect={setSelectedId}
+          onPlace={(m, tick, step) => {
+            setSelectedId(null)
+            apply(placeNote(song, m, tick, choiceTicks(choice), step))
+          }}
           onMove={(id, step) => edit(moveNote(song, id, step))}
           onPreview={preview}
           onAddMeasure={() => edit(setMeasures(song, song.measures + 1))}
           getPlayBeat={getPlayBeat}
         />
-        <p className="hint">Tap a beat to place a quarter note — slide up or down before letting go to pick the pitch. Tap a note to remove it, or drag it to move it.</p>
+        <p className={`hint ${message ? 'error' : ''}`}>
+          {message ??
+            (selected
+              ? 'Note selected: pick a length to change it, 🗑 to delete it, or tap it again to deselect.'
+              : 'Pick a length, then tap a rest and slide up or down to choose the pitch. Tap a note to select it; drag it to move it.')}
+        </p>
       </main>
+
+      <DurationPalette
+        value={shownChoice}
+        onChange={changeDuration}
+        canDelete={!!selected}
+        onDelete={() => {
+          if (selected) edit(removeNote(song, selected.id))
+          setSelectedId(null)
+        }}
+      />
 
       <footer className="transport">
         <button className={`btn play ${playing ? 'on' : ''}`} onClick={togglePlay} aria-label={playing ? 'Stop' : 'Play'}>

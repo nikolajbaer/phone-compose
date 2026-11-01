@@ -1,4 +1,4 @@
-import type { Song } from './song'
+import { normalizeSong, type Song } from './song'
 
 const KEY = 'phone-compose:songs'
 
@@ -6,7 +6,7 @@ export function loadSongs(): Song[] {
   try {
     const raw = localStorage.getItem(KEY)
     const songs = raw ? (JSON.parse(raw) as Song[]) : []
-    return Array.isArray(songs) ? songs.sort((a, b) => b.updatedAt - a.updatedAt) : []
+    return Array.isArray(songs) ? songs.map(normalizeSong).sort((a, b) => b.updatedAt - a.updatedAt) : []
   } catch {
     return []
   }
