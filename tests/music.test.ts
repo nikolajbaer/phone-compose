@@ -3,6 +3,7 @@ import { getSoundfontNames } from 'smplr'
 import { describe, expect, it } from 'vitest'
 import { songToMidi } from '../src/audio/midiExport'
 import { chordName } from '../src/music/chords'
+import { diatonicChords, specName, voiceChord } from '../src/music/chordBuilder'
 import { TPQ, choiceTicks, describeTicks, restsFor } from '../src/music/duration'
 import { INSTRUMENTS, getInstrument } from '../src/music/instruments'
 import {
@@ -11,6 +12,7 @@ import {
   moveNote,
   noteMidi,
   normalizeSong,
+  placeChord,
   placeNote,
   removeNote,
   setBeatsPerMeasure,
@@ -210,5 +212,54 @@ describe('instruments', () => {
   it('writes the General MIDI program to exported files', () => {
     const s = { ...add(newSong(), 0, 0, Q, 0), instrument: 'violin' }
     expect(new Midi(songToMidi(s)).tracks[0].instrument.number).toBe(40)
+  })
+})
+
+describe('chord picker', () => {
+  const names = (ps: { step: number; alter: number }[]) => ps.map((p) => pitchName(p.step, p.alter))
+  const G7 = { letter: 4, alter: 0, quality: '7', inversion: 0 }
+
+  it('spells chords properly and voices them close from the bass', () => {
+    expect(names(voiceChord(G7, 4))).toEqual(['G4', 'B4', 'D5', 'F5'])
+    expect(names(voiceChord({ letter: 1, alter: 0, quality: 'maj', inversion: 0 }, 1))).toEqual(['D4', 'F♯4', 'A4'])
+    expect(names(voiceChord({ letter: 6, alter: -1, quality: 'maj7', inversion: 0 }, 6))).toEqual(['B♭4', 'D5', 'F5', 'A5'])
+    expect(names(voiceChord({ letter: 0, alter: 1, quality: 'dim7', inversion: 0 }, 0))).toEqual(['C♯4', 'E4', 'G4', 'B♭4'])
+  })
+
+  it('puts the chosen chord tone in the bass for inversions', () => {
+    expect(names(voiceChord({ ...G7, inversion: 1 }, 6))).toEqual(['B4', 'D5', 'F5', 'G5'])
+    expect(names(voiceChord({ ...G7, inversion: 3 }, 3))).toEqual(['F4', 'G4', 'B4', 'D5'])
+    expect(specName({ ...G7, inversion: 1 })).toBe('G7/B')
+    expect(specName({ letter: 0, alter: 0, quality: 'maj', inversion: 2 })).toBe('C/G')
+    // The name the staff prints for the written notes agrees with the picker.
+    expect(chordName(voiceChord({ ...G7, inversion: 1 }, 6))).toBe('G7/B')
+  })
+
+  it('keeps chords on the staff', () => {
+    for (const bass of [-10, -3, 0, 7, 14, 20]) {
+      const steps = voiceChord({ letter: 4, alter: 0, quality: '9', inversion: 0 }, bass).map((p) => p.step)
+      expect(Math.min(...steps)).toBeGreaterThanOrEqual(posToStep(-5))
+    }
+    const high = voiceChord({ letter: 0, alter: 0, quality: 'maj', inversion: 0 }, 14).map((p) => p.step)
+    expect(Math.max(...high)).toBeLessThanOrEqual(posToStep(12))
+  })
+
+  it('lists the chords of a key', () => {
+    expect(diatonicChords(0).map(specName)).toEqual(['C', 'Dm', 'Em', 'F', 'G', 'Am', 'Bdim'])
+    expect(diatonicChords(-2).map(specName)).toEqual(['B♭', 'Cm', 'Dm', 'E♭', 'F', 'Gm', 'Adim'])
+    expect(diatonicChords(2).map((c) => c.numeral)).toEqual(['I', 'ii', 'iii', 'IV', 'V', 'vi', 'vii°'])
+  })
+
+  it('writes a chord, or replaces one keeping its length', () => {
+    let s = placeChord(newSong(), 0, 0, 2 * Q, voiceChord(G7, 4)).song
+    expect(s.notes).toHaveLength(4)
+    expect(s.notes.every((n) => n.dur === 2 * Q)).toBe(true)
+    s = placeChord(s, 0, 0, Q, voiceChord({ letter: 0, alter: 0, quality: 'maj', inversion: 0 }, 0)).song
+    expect(s.notes.map((n) => [n.step, n.dur])).toEqual([
+      [0, 2 * Q],
+      [2, 2 * Q],
+      [4, 2 * Q],
+    ])
+    expect(placeChord(s, 0, 3 * Q, 2 * Q, voiceChord(G7, 4)).error).toBeTruthy()
   })
 })

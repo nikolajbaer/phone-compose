@@ -259,9 +259,11 @@ interface StaffProps {
   onAddMeasure: () => void
   /** Returns the play position in beats, or null when stopped. Polled each frame. */
   getPlayBeat: () => number | null
+  /** Chord input: presses write this chord, voiced with its bass near the pressed pitch. */
+  chordInput?: { voice: (bassStep: number) => { step: number; alter: number }[]; label: string } | null
 }
 
-export function Staff({ song, inputDur, selectedId, onSelect, onPlace, onMove, onPreview, onAddMeasure, getPlayBeat }: StaffProps) {
+export function Staff({ song, inputDur, selectedId, onSelect, onPlace, onMove, onPreview, onAddMeasure, getPlayBeat, chordInput }: StaffProps) {
   const svgRef = useRef<SVGSVGElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const playheadRef = useRef<SVGLineElement>(null)
@@ -316,7 +318,8 @@ export function Staff({ song, inputDur, selectedId, onSelect, onPlace, onMove, o
     const { measure, slot, pos } = at
     // Grab an existing note if the press is on (or right next to) one.
     let hit: Note | undefined
-    if (slot.ev.kind === 'chord') {
+    // In chord input every press writes the chord, so notes are not grabbed.
+    if (slot.ev.kind === 'chord' && !chordInput) {
       const notes = slot.ev.notes
       hit = notes.find((n) => stepToPos(n.step) === pos) ?? notes.find((n) => Math.abs(stepToPos(n.step) - pos) === 1)
     }
@@ -400,6 +403,7 @@ export function Staff({ song, inputDur, selectedId, onSelect, onPlace, onMove, o
                   s.ev.kind === 'rest' ? (
                     !(press?.slot === s) && <RestGlyph key={s.ev.tick} slot={s} />
                   ) : (
+                    !(chordInput && press?.slot === s) && (
                     <ChordGlyph
                       key={s.ev.tick}
                       song={song}
@@ -409,6 +413,7 @@ export function Staff({ song, inputDur, selectedId, onSelect, onPlace, onMove, o
                       selectedId={selectedId}
                       hiddenId={press?.slot === s && press.moved ? press.noteId : undefined}
                     />
+                    )
                   ),
                 )}
                 {m.tuplets.map((t) => {
@@ -450,13 +455,22 @@ export function Staff({ song, inputDur, selectedId, onSelect, onPlace, onMove, o
             ))}
             {press && ghostNote && (
               <g className="ghost">
-                {ghostOnRest ? (
+                {chordInput ? (
+                  <ChordGlyph
+                    song={song}
+                    chord={{
+                      dur: ghostOnRest ? inputDur : press.slot.ev.dur,
+                      notes: chordInput.voice(ghostStep).map((p, i) => ({ ...ghostNote, id: `__ghost${i}`, ...p })),
+                    }}
+                    headX={press.slot.headX}
+                  />
+                ) : ghostOnRest ? (
                   <ChordGlyph song={song} chord={{ dur: inputDur, notes: [ghostNote] }} headX={press.slot.headX} />
                 ) : (
                   <GhostHead headX={press.slot.headX} pos={press.pos} dur={press.slot.ev.dur} />
                 )}
-                <text className="pitch-label" x={press.slot.headX + 14} y={Math.max(CHORD_Y + 16, y(press.pos) - 2.2 * SPACE)}>
-                  {pitchName(ghostStep, ghostAlter)}
+                <text className="pitch-label" x={press.slot.headX + 14} y={chordInput ? CHORD_Y + 18 : Math.max(CHORD_Y + 16, y(press.pos) - 2.2 * SPACE)}>
+                  {chordInput ? chordInput.label : pitchName(ghostStep, ghostAlter)}
                 </text>
               </g>
             )}

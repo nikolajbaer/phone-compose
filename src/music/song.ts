@@ -138,6 +138,36 @@ export function placeNote(song: Song, measure: number, tick: number, dur: number
   return { song: touch(song, { notes: [...clearSpan(song.notes, measure, tick, dur, false), note] }) }
 }
 
+/**
+ * Write a whole chord (pitches with their own spelling) at a tick. If a chord
+ * already starts there its pitches are replaced and its length kept;
+ * otherwise a new chord of `dur` is written, like placeNote.
+ */
+export function placeChord(
+  song: Song,
+  measure: number,
+  tick: number,
+  dur: number,
+  pitches: { step: number; alter: number }[],
+): EditResult {
+  const existing = song.notes.find((n) => n.measure === measure && n.tick === tick)
+  if (!existing) {
+    if (song.notes.some((n) => n.measure === measure && n.tick < tick && n.tick + n.dur > tick)) {
+      return { song, error: 'Another note is still sounding there.' }
+    }
+    if (tick + dur > measureTicks(song)) return { song, error: 'That chord is too long to fit in the rest of the measure.' }
+  }
+  const len = existing ? existing.dur : dur
+  const others = existing
+    ? song.notes.filter((n) => !(n.measure === measure && n.tick === tick))
+    : clearSpan(song.notes, measure, tick, len, false)
+  const seen = new Set<number>()
+  const chord: Note[] = pitches
+    .filter((p) => !seen.has(p.step) && seen.add(p.step))
+    .map((p) => ({ id: uid(), measure, tick, dur: len, step: p.step, alter: p.alter }))
+  return { song: touch(song, { notes: [...others, ...chord] }) }
+}
+
 /** Change the length of the chord a note belongs to. */
 export function setChordDuration(song: Song, noteId: string, dur: number): EditResult {
   const note = song.notes.find((n) => n.id === noteId)

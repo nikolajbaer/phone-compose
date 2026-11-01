@@ -147,8 +147,14 @@ class Player {
 
   /** Play one note now, e.g. as feedback while placing it. */
   preview(instrument: string, midi: number) {
+    this.previewChord(instrument, [midi], 0.3)
+  }
+
+  /** Play several notes together now. */
+  previewChord(instrument: string, midis: number[], seconds = 0.8) {
     if (Tone.getContext().state !== 'running') return
-    this.voice(instrument).play(midi, Tone.now(), 0.3)
+    const v = this.voice(instrument)
+    for (const m of midis) v.play(m, Tone.now(), seconds)
   }
 
   // --- the song --------------------------------------------------------------

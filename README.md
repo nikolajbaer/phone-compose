@@ -19,6 +19,12 @@ you write on by tapping, in the spirit of BeepBox but with real notes instead of
 - **Chords**: press on an existing note's column to add a pitch to it (seconds are engraved on both sides
   of the stem). Chord symbols (C, Am7, G7/B…) are printed above the staff when three or more different
   notes sound together.
+- **Chord picker**: the Chord button opens a sheet with the chords of the song's key (I ii iii IV V vi
+  vii°), any root (with ♭/♯), 15 chord types (major, minor, 7, maj7, m7, dim, aug, sus2/4, 6, m6, m7♭5,
+  dim7, add9, 9) and the bass note (root position or 1st/2nd/3rd inversion), with a preview. Chords are
+  spelled properly and voiced in close position on the staff. With a note selected it replaces that
+  chord (keeping its length); otherwise it turns on chord input: tapping a rest writes the chord at the
+  selected length, with its bass near where you press (slide to move it up or down).
 - **Editing**: tap a note to select it; the palette then changes that chord's length and 🗑 deletes the
   note. Drag a note up or down to move it. Undo with ↶.
 - **Playback**: play/stop, looping, a playhead that the score follows, and a tempo stepper. Timing comes
@@ -58,6 +64,7 @@ repository for its terms before distributing it in other ways.
 - `src/music/theory.ts` — pitch math: diatonic steps, key signatures, staff positions.
 - `src/music/duration.ts` — note lengths in ticks (48 per quarter), dotted/triplet values, rest filling.
 - `src/music/chords.ts` — chord symbol naming.
+- `src/music/chordBuilder.ts` — building chords from root, type and inversion; chords of a key.
 - `src/music/song.ts` — the song model and pure editing functions (place / move / remove notes, change
   lengths, key, meter). Songs saved before note lengths existed are upgraded on load.
 - `src/music/storage.ts` — saving songs in localStorage.
@@ -67,6 +74,7 @@ repository for its terms before distributing it in other ways.
 - `src/components/staffLayout.ts` — horizontal layout, beaming and triplet groups.
 - `src/components/Staff.tsx` — the notation view and its touch input.
 - `src/components/DurationPalette.tsx` — the note-length palette.
+- `src/components/ChordPicker.tsx` — the chord picker sheet.
 - `src/components/Editor.tsx`, `Home.tsx`, `NewSongForm.tsx` — screens and menus.
 
 Notes store a diatonic step plus an alteration rather than a MIDI number, so the score can always be

@@ -116,15 +116,29 @@ button, input, select { font: inherit; color: inherit; }
 
 /* note-length palette */
 .palette { display: flex; align-items: center; justify-content: center; gap: 4px; padding: 6px 8px; background: var(--panel); border-top: 1px solid #2c2c3e; flex-wrap: nowrap; }
-.pal-btn { width: 40px; height: 46px; display: flex; align-items: center; justify-content: center; background: var(--panel-2); border: 1px solid #3a3a50; border-radius: 10px; padding: 0; cursor: pointer; font-size: 1.1rem; }
+.pal-btn { flex: 1 1 0; min-width: 0; max-width: 44px; height: 46px; display: flex; align-items: center; justify-content: center; background: var(--panel-2); border: 1px solid #3a3a50; border-radius: 10px; padding: 0; cursor: pointer; font-size: 1.1rem; }
 .pal-btn .glyph { fill: var(--ink); }
 .pal-btn.on { background: var(--accent); border-color: var(--accent); }
 .pal-btn.on .glyph { fill: #0b1a22; }
 .pal-btn:disabled { opacity: 0.3; }
-.pal-sep { width: 1px; height: 30px; background: #3a3a50; margin: 0 2px; }
+.pal-sep { flex: none; width: 1px; height: 30px; background: #3a3a50; margin: 0 2px; }
 .hint.error { color: var(--danger); }
 .note.selected { fill: var(--accent); }
 .beam { fill: var(--ink); }
 .tuplet polyline { stroke: var(--ink); stroke-width: 1.4; }
 .tuplet .glyph { fill: var(--ink); }
 .chord-label { fill: var(--accent-2); font-size: 15px; font-weight: 700; font-family: system-ui, sans-serif; }
+
+/* chord picker */
+.chord-picker { gap: 10px; }
+.chord-picker section h3 { margin: 0 0 6px; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); font-weight: 600; }
+.cp-head { display: flex; align-items: center; justify-content: space-between; }
+.cp-name { font-size: 1.8rem !important; color: var(--accent-2); margin: 0 !important; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { min-width: 44px; min-height: 40px; padding: 4px 10px; background: var(--panel-2); border: 1px solid #3a3a50; border-radius: 10px; cursor: pointer; display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1.1; font-size: 0.95rem; }
+.chip small { font-size: 0.7rem; color: var(--muted); }
+.chip.on { background: var(--accent); border-color: var(--accent); color: #0b1a22; }
+.chip.on small { color: #0b1a22; }
+.chip-sep { width: 8px; }
+.pal-btn.chord-btn { flex: 0 0 auto; max-width: none; min-width: 52px; padding: 0 6px; font-size: 0.8rem; font-weight: 700; }
+.pal-btn.chord-btn.on { color: #0b1a22; }

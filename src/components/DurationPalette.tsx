@@ -33,9 +33,12 @@ interface Props {
   onChange: (c: DurationChoice) => void
   canDelete: boolean
   onDelete: () => void
+  /** Chord name while chord input is on. */
+  chordLabel: string | null
+  onChord: () => void
 }
 
-export function DurationPalette({ value, onChange, canDelete, onDelete }: Props) {
+export function DurationPalette({ value, onChange, canDelete, onDelete, chordLabel, onChord }: Props) {
   return (
     <div className="palette" role="toolbar" aria-label="Note length">
       {BASES.map((b) => (
@@ -67,6 +70,9 @@ export function DurationPalette({ value, onChange, canDelete, onDelete }: Props)
         <Glyph ch={''} y={28} size={30} />
       </button>
       <span className="pal-sep" />
+      <button className={`pal-btn chord-btn ${chordLabel ? 'on' : ''}`} aria-label="Chord" onClick={onChord}>
+        {chordLabel ?? 'Chord'}
+      </button>
       <button className="pal-btn" aria-label="Delete note" disabled={!canDelete} onClick={onDelete}>
         🗑
       </button>
