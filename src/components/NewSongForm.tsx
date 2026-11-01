@@ -1,14 +1,15 @@
 import { useState } from 'react'
-import type { InstrumentId, NewSongOptions } from '../music/song'
-import { INSTRUMENTS } from '../music/song'
+import { DEFAULT_INSTRUMENT } from '../music/instruments'
+import type { NewSongOptions } from '../music/song'
 import { KEYS } from '../music/theory'
+import { InstrumentSelect } from './InstrumentSelect'
 
 export function NewSongForm({ onCreate, onCancel }: { onCreate: (o: NewSongOptions) => void; onCancel: () => void }) {
   const [title, setTitle] = useState('')
   const [tempo, setTempo] = useState(120)
   const [beats, setBeats] = useState(4)
   const [fifths, setFifths] = useState(0)
-  const [instrument, setInstrument] = useState<InstrumentId>('square')
+  const [instrument, setInstrument] = useState(DEFAULT_INSTRUMENT)
   const [measures, setMeasures] = useState(4)
 
   return (
@@ -58,13 +59,7 @@ export function NewSongForm({ onCreate, onCancel }: { onCreate: (o: NewSongOptio
         </label>
         <label>
           Instrument
-          <select value={instrument} onChange={(e) => setInstrument(e.target.value as InstrumentId)}>
-            {INSTRUMENTS.map((i) => (
-              <option key={i.id} value={i.id}>
-                {i.name}
-              </option>
-            ))}
-          </select>
+          <InstrumentSelect value={instrument} onChange={setInstrument} />
         </label>
         <div className="sheet-actions">
           <button type="button" className="btn" onClick={onCancel}>

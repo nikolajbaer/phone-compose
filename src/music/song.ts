@@ -12,15 +12,8 @@ export interface Note {
   alter: number
 }
 
-export type InstrumentId = 'square' | 'triangle' | 'sawtooth' | 'bell' | 'organ'
-
-export const INSTRUMENTS: { id: InstrumentId; name: string }[] = [
-  { id: 'square', name: 'Chip square' },
-  { id: 'triangle', name: 'Soft triangle' },
-  { id: 'sawtooth', name: 'Saw lead' },
-  { id: 'bell', name: 'FM bell' },
-  { id: 'organ', name: 'Organ' },
-]
+/** An id from INSTRUMENTS (instruments.ts). */
+export type InstrumentId = string
 
 export interface Song {
   id: string

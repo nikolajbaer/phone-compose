@@ -15,9 +15,15 @@ you write on by tapping, in the spirit of BeepBox but with real notes instead of
   the pitch, let go to place it (sounds as you go). Pitches follow the key signature. Several notes on one
   beat make a chord (seconds are engraved on both sides of the stem). Tap a note to remove it, or drag it
   up and down to move it. Undo with ↶.
-- **Playback** with [Tone.js](https://tonejs.github.io/): play/stop, looping, a playhead that the score
-  follows, tempo stepper and a few chip-style instruments.
-- **Export MIDI**: the ☰ menu writes a standard `.mid` file (via `@tonejs/midi`).
+- **Playback**: play/stop, looping, a playhead that the score follows, and a tempo stepper. Timing comes
+  from the [Tone.js](https://tonejs.github.io/) Transport.
+- **Real instruments** via [smplr](https://github.com/danigb/smplr): a grand piano (Splendid Grand Piano)
+  plus strings, winds, brass, guitar, choir and more from the FluidR3 General MIDI soundfont
+  ([midi-js-soundfonts](https://github.com/gleitz/midi-js-soundfonts)). Samples download the first time an
+  instrument is used (about 1 MB per instrument; the piano loads only the range the staff can hold) and
+  are cached by the browser. A few Tone.js synths (chip square, saw, FM bell…) need no download.
+- **Export MIDI**: the ☰ menu writes a standard `.mid` file (via `@tonejs/midi`) with the song's General
+  MIDI instrument, so it sounds similar in other apps.
 
 ## Develop
 
@@ -35,12 +41,19 @@ npm run build      # static site in dist/ (relative paths; works on GitHub Pages
 One-time setup: in the repo's **Settings → Pages**, set **Source** to **GitHub Actions**. The site is then at
 `https://<owner>.github.io/phone-compose/`.
 
+## Sound credits and licenses
+
+The samples are downloaded at runtime from the projects' own hosting (GitHub Pages), not bundled here.
+FluidR3_GM is MIT-licensed; check the [Splendid Grand Piano](https://github.com/sfzinstruments/SplendidGrandPiano)
+repository for its terms before distributing it in other ways.
+
 ## Layout
 
 - `src/music/theory.ts` — pitch math: diatonic steps, key signatures, staff positions.
 - `src/music/song.ts` — the song model and pure editing functions (add / move / remove notes, key, meter).
 - `src/music/storage.ts` — saving songs in localStorage.
-- `src/audio/player.ts` — Tone.js playback and note previews.
+- `src/music/instruments.ts` — the instrument list: smplr sample sets, synths, General MIDI programs.
+- `src/audio/player.ts` — playback and note previews (Tone.js timing, smplr or Tone.js sound).
 - `src/audio/midiExport.ts` — MIDI file export.
 - `src/components/Staff.tsx` — the notation view and its touch input.
 - `src/components/Editor.tsx`, `Home.tsx`, `NewSongForm.tsx` — screens and menus.

@@ -15,6 +15,7 @@
     "@vexflow-fonts/bravura": "^1.0.2",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
+    "smplr": "^1.1.0",
     "tone": "^15.1.22"
   },
   "devDependencies": {

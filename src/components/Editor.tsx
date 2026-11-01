@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { player } from '../audio/player'
 import { downloadMidi } from '../audio/midiExport'
-import type { InstrumentId, Song } from '../music/song'
-import { INSTRUMENTS, addNote, moveNote, removeNote, setBeatsPerMeasure, setKey, setMeasures, updateSong } from '../music/song'
+import type { Song } from '../music/song'
+import { addNote, moveNote, removeNote, setBeatsPerMeasure, setKey, setMeasures, updateSong } from '../music/song'
 import { KEYS, keyAlter, letterOf, toMidi } from '../music/theory'
+import { InstrumentSelect, InstrumentStatus } from './InstrumentSelect'
 import { Staff } from './Staff'
 
 interface EditorProps {
@@ -34,6 +35,9 @@ export function Editor({ song, onChange, onNewSong, onHome }: EditorProps) {
     const prev = history.current.pop()
     if (prev) onChange(prev)
   }
+
+  // Start downloading the song's instrument as soon as it is chosen.
+  useEffect(() => player.preload(song.instrument), [song.instrument])
 
   // Keep playback in sync with edits.
   useEffect(() => {
@@ -111,13 +115,8 @@ export function Editor({ song, onChange, onNewSong, onHome }: EditorProps) {
         </label>
         <label className="field">
           <span>Sound</span>
-          <select value={song.instrument} onChange={(e) => edit(updateSong(song, { instrument: e.target.value as InstrumentId }))}>
-            {INSTRUMENTS.map((i) => (
-              <option key={i.id} value={i.id}>
-                {i.name}
-              </option>
-            ))}
-          </select>
+          <InstrumentSelect value={song.instrument} onChange={(id) => edit(updateSong(song, { instrument: id }))} />
+          <InstrumentStatus id={song.instrument} />
         </label>
       </footer>
 

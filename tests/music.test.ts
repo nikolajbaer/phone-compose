@@ -1,6 +1,8 @@
 import { Midi } from '@tonejs/midi'
+import { getSoundfontNames } from 'smplr'
 import { describe, expect, it } from 'vitest'
 import { songToMidi } from '../src/audio/midiExport'
+import { INSTRUMENTS, getInstrument } from '../src/music/instruments'
 import { addNote, createSong, moveNote, noteMidi, removeNote, setBeatsPerMeasure, setKey, setMeasures } from '../src/music/song'
 import { keyAlter, pitchName, posToStep, toMidi } from '../src/music/theory'
 
@@ -76,5 +78,22 @@ describe('MIDI export', () => {
     expect(notes.map((n) => n.midi)).toEqual([60, 67])
     expect(notes[1].ticks).toBe(6 * midi.header.ppq)
     expect(notes[1].durationTicks).toBe(midi.header.ppq)
+  })
+})
+
+describe('instruments', () => {
+  it('uses soundfont names that exist in midi-js-soundfonts', () => {
+    const names = new Set(getSoundfontNames())
+    for (const i of INSTRUMENTS) if (i.source.kind === 'soundfont') expect(names, i.id).toContain(i.source.name)
+  })
+
+  it('has unique ids and falls back to the piano for unknown ids', () => {
+    expect(new Set(INSTRUMENTS.map((i) => i.id)).size).toBe(INSTRUMENTS.length)
+    expect(getInstrument('nope').id).toBe('piano')
+  })
+
+  it('writes the General MIDI program to exported files', () => {
+    const s = { ...addNote(newSong(), 0, 0, 0), instrument: 'violin' }
+    expect(new Midi(songToMidi(s)).tracks[0].instrument.number).toBe(40)
   })
 })

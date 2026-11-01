@@ -40,6 +40,11 @@ export function Home({ songs, onNew, onOpen, onDelete }: { songs: Song[]; onNew:
           </ul>
         </section>
       )}
+      <footer className="credits">
+        Sounds: <a href="https://github.com/sfzinstruments/SplendidGrandPiano">Splendid Grand Piano</a> and the FluidR3 GM
+        soundfont (via <a href="https://github.com/gleitz/midi-js-soundfonts">midi-js-soundfonts</a>), played with{' '}
+        <a href="https://github.com/danigb/smplr">smplr</a>.
+      </footer>
     </div>
   )
 }
