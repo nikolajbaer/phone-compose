@@ -25,8 +25,15 @@ you write on by tapping, in the spirit of BeepBox but with real notes instead of
   spelled properly and voiced in close position on the staff. With a note selected it replaces that
   chord (keeping its length); otherwise it turns on chord input: tapping a rest writes the chord at the
   selected length, with its bass near where you press (slide to move it up or down).
-- **Ties**: select a note and press the tie button to tie it to the same pitch at the next position
-  (writing that note if there's a rest, across barlines too). Tied notes play and export as one note.
+- **Ties and slides**: select a note and press the tie button to connect it to the next position (writing
+  the same pitch there if it's a rest, across barlines too). Same pitch: a tie, played as one long note.
+  Drag the tied note up or down and it becomes a slide: drawn as a glissando line and played as a pitch
+  glide over the second half of the first note. Tying into a chord without that pitch slides to its
+  nearest note.
+- **Tracks**: a song has any number of tracks, each with its own instrument, clef and notes. The tabs
+  above the staff pick the track you edit; tap the active tab for its instrument, clef, mute and delete.
+  Key, time signature and length are shared. All unmuted tracks play together, and MIDI export writes
+  one MIDI track per track, each on its own channel.
 - **Sharps and flats**: with a note selected, ♭ ♮ ♯ set its accidental; with nothing selected they set the
   accidental for the notes you write next (tap again to go back to the key signature). Accidentals are
   printed as in standard notation: they carry through the measure and naturals cancel them.
@@ -74,16 +81,19 @@ repository for its terms before distributing it in other ways.
 - `src/music/clefs.ts` — clefs and how they map pitches to staff positions.
 - `src/music/chords.ts` — chord symbol naming.
 - `src/music/chordBuilder.ts` — building chords from root, type and inversion; chords of a key.
-- `src/music/song.ts` — the song model and pure editing functions (place / move / remove notes, change
+- `src/music/song.ts` — the song model (a song of tracks; a Part is one track with the song's settings,
+  which is what the staff edits) and pure editing functions (place / move / remove notes, change
   lengths, ties, accidentals, key, meter, instrument and clef). Songs saved before note lengths existed are upgraded on load.
 - `src/music/storage.ts` — saving songs in localStorage.
 - `src/music/instruments.ts` — the instrument list: smplr sample sets, synths, General MIDI programs.
-- `src/audio/player.ts` — playback and note previews (Tone.js timing, smplr or Tone.js sound).
+- `src/audio/player.ts` — playback and note previews (Tone.js timing, smplr or Tone.js sound). Slides on
+  sampled instruments ramp the pitch of smplr's audio source, caught as smplr creates it.
 - `src/audio/midiExport.ts` — MIDI file export.
 - `src/components/staffLayout.ts` — horizontal layout, beaming and triplet groups.
 - `src/components/Staff.tsx` — the notation view and its touch input.
 - `src/components/DurationPalette.tsx` — the note-length palette.
 - `src/components/ChordPicker.tsx` — the chord picker sheet.
+- `src/components/TrackBar.tsx` — the track tabs.
 - `src/components/Editor.tsx`, `Home.tsx`, `NewSongForm.tsx` — screens and menus.
 
 Notes store a diatonic step plus an alteration rather than a MIDI number, so the score can always be

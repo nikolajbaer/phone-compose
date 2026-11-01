@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { TPQ, describeTicks, type BaseDuration, type RestShape } from '../music/duration'
-import type { Chord, Note, Song } from '../music/song'
+import type { Chord, Note, Part } from '../music/song'
 import { MAX_POS, MIN_POS, MIDDLE_POS, clampPos, keyAlter, letterOf, pitchName } from '../music/theory'
 import { clefPosToStep, clefStepToPos, getClef, stemUpFor, type ClefDef } from '../music/clefs'
-import { tieTarget } from '../music/song'
+import { isSlide, tieTarget } from '../music/song'
 import { SPACE, STEP, beamCount, chordLabels, hitSlot, layoutSong, tickToX, type Slot, type SongLayout } from './staffLayout'
 
 // The score: one staff (treble, bass, alto... per the song's clef) drawn in SVG with SMuFL glyphs from the Bravura
@@ -69,7 +69,7 @@ function StaffLines({ width }: { width: number }) {
 const KEY_SHARP_POS = [8, 5, 9, 6, 3, 7, 4]
 const KEY_FLAT_POS = [4, 7, 3, 6, 2, 5, 1]
 
-export function StaffHeader({ song }: { song: Song }) {
+export function StaffHeader({ song }: { song: Part }) {
   const clef = getClef(song.clef)
   const n = Math.abs(song.fifths)
   const keyX = 6 + 3.2 * SPACE // clefs are about 2.8 spaces wide
@@ -255,7 +255,7 @@ interface Press {
 }
 
 interface StaffProps {
-  song: Song
+  song: Part
   /** Length in ticks of the note the palette will write. */
   inputDur: number
   selectedId: string | null
@@ -525,8 +525,8 @@ function GhostHead({ headX, pos, dur }: { headX: number; pos: number; dur: numbe
   )
 }
 
-/** Curves for ties, from each tied note's head to the next note's head. */
-function tieCurves(song: Song, layout: SongLayout, stems: Map<Slot, StemSpec>) {
+/** Curves for ties and lines for slides, from each connected note's head to the next note's head. */
+function tieCurves(song: Part, layout: SongLayout, stems: Map<Slot, StemSpec>) {
   const clef = layout.clef
   const where = new Map<string, { slot: Slot; chordSize: number; mid: number }>()
   for (const m of layout.measures) {
@@ -544,6 +544,19 @@ function tieCurves(song: Song, layout: SongLayout, stems: Map<Slot, StemSpec>) {
     const b = t && where.get(t.id)
     if (!t || !a || !b) continue
     const pos = clefStepToPos(clef, n.step)
+    if (isSlide(n, t)) {
+      // A slide: a straight line from one notehead to the next (glissando).
+      const x1 = a.slot.headX + 1.18 * SPACE + 3
+      const x2 = b.slot.headX - 3
+      const y1 = y(pos)
+      const y2 = y(clefStepToPos(clef, t.step))
+      const dx = x2 - x1
+      const dy = y2 - y1
+      const len = Math.hypot(dx, dy) || 1
+      const [nx, ny] = [(-dy / len) * 1.3, (dx / len) * 1.3]
+      out.push({ key: n.id, d: `M${x1 + nx},${y1 + ny} L${x2 + nx},${y2 + ny} L${x2 - nx},${y2 - ny} L${x1 - nx},${y1 - ny} Z` })
+      continue
+    }
     // Single notes tie on the side away from the stem; in chords, upper notes tie over, lower under.
     let over: boolean
     if (a.chordSize === 1) {

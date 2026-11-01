@@ -24,17 +24,24 @@ import {
   setChordDuration,
   setKey,
   setMeasures,
+  addTrack,
+  partOf,
+  withPart,
+  isSlide,
+  type Part,
   type Song,
 } from '../src/music/song'
 import { keyAlter, pitchName, posToStep, toMidi } from '../src/music/theory'
 import { layoutSong } from '../src/components/staffLayout'
 import { clefPosToStep, clefRange, getClef } from '../src/music/clefs'
 
-const newSong = (fifths = 0) => createSong({ title: 'T', tempo: 120, beatsPerMeasure: 4, fifths, instrument: 'square' })
+const newSong = (fifths = 0) => partOf(createSong({ title: 'T', tempo: 120, beatsPerMeasure: 4, fifths, instrument: 'square' }), 0)
+/** A one-track song holding a part, for song-level functions. */
+const songOf = (part: Part): Song => withPart(createSong({ title: 'T', tempo: part.tempo, beatsPerMeasure: 4, fifths: 0, instrument: part.instrument }), 0, part)
 const Q = TPQ
 const E = TPQ / 2
 const S = TPQ / 4
-const add = (s: Song, m: number, tick: number, dur: number, step: number) => {
+const add = (s: Part, m: number, tick: number, dur: number, step: number) => {
   const r = placeNote(s, m, tick, dur, step)
   if (r.error) throw new Error(r.error)
   return r.song
@@ -160,8 +167,10 @@ describe('song editing', () => {
   })
 
   it('upgrades songs saved with beat-based notes', () => {
-    const old = { ...newSong(), notes: [{ id: 'a', measure: 1, beat: 2, step: 0, alter: 0 }] } as unknown as Song
-    expect(normalizeSong(old).notes[0]).toEqual({ id: 'a', measure: 1, tick: 2 * Q, dur: Q, step: 0, alter: 0 })
+    const old = { ...songOf(newSong()), tracks: undefined, instrument: 'piano', notes: [{ id: 'a', measure: 1, beat: 2, step: 0, alter: 0 }] }
+    const song = normalizeSong(old as unknown as Song)
+    expect(song.tracks).toHaveLength(1)
+    expect(song.tracks[0].notes[0]).toEqual({ id: 'a', measure: 1, tick: 2 * Q, dur: Q, step: 0, alter: 0 })
   })
 })
 
@@ -193,7 +202,7 @@ describe('MIDI export', () => {
   it('writes notes, lengths, tempo and meter', () => {
     let s = add(newSong(), 0, 0, E, 0)
     s = add(s, 1, Q + E, 3 * Q - E - Q, 4)
-    const midi = new Midi(songToMidi({ ...s, tempo: 90 }))
+    const midi = new Midi(songToMidi(songOf({ ...s, tempo: 90 })))
     expect(Math.round(midi.header.tempos[0].bpm)).toBe(90)
     expect(midi.header.timeSignatures[0].timeSignature).toEqual([4, 4])
     const notes = midi.tracks[0].notes
@@ -217,7 +226,7 @@ describe('instruments', () => {
 
   it('writes the General MIDI program to exported files', () => {
     const s = { ...add(newSong(), 0, 0, Q, 0), instrument: 'violin' }
-    expect(new Midi(songToMidi(s)).tracks[0].instrument.number).toBe(40)
+    expect(new Midi(songToMidi(songOf(s))).tracks[0].instrument.number).toBe(40)
   })
 })
 
@@ -279,7 +288,7 @@ describe('ties', () => {
     expect(r.nextId).toBeTruthy()
     const next = s.notes.find((n) => n.id === r.nextId)!
     expect([next.measure, next.tick, next.dur, next.step]).toEqual([1, 0, 2 * Q, 4])
-    expect(soundingNotes(s)).toEqual([{ midi: 67, start: 3 * Q, dur: 3 * Q }])
+    expect(soundingNotes(s)).toEqual([{ midi: 67, start: 3 * Q, dur: 3 * Q, bends: [] }])
     // Untie: two separate notes again.
     s = toggleTie(s, first, Q).song
     expect(soundingNotes(s).map((n) => n.dur)).toEqual([Q, 2 * Q])
@@ -290,7 +299,7 @@ describe('ties', () => {
     const [a, b] = s.notes
     s = toggleTie(toggleTie(s, a.id, Q).song, b.id, Q).song
     expect(s.notes).toHaveLength(3)
-    expect(soundingNotes(s)).toEqual([{ midi: 60, start: 0, dur: 3 * Q }])
+    expect(soundingNotes(s)).toEqual([{ midi: 60, start: 0, dur: 3 * Q, bends: [] }])
   })
 
   it('refuses to tie past the last measure', () => {
@@ -355,7 +364,80 @@ describe('clefs', () => {
   })
 
   it('upgrades songs saved without a clef from their instrument', () => {
-    const old = { ...newSong(), instrument: 'cello', clef: undefined } as unknown as Song
-    expect(normalizeSong(old).clef).toBe('bass')
+    const old = { ...songOf(newSong()), tracks: undefined, instrument: 'cello', notes: [] } as unknown as Song
+    expect(normalizeSong(old).tracks[0].clef).toBe('bass')
+  })
+})
+
+describe('slides', () => {
+  it('turns a tie into a slide when the tied note is moved', () => {
+    let s = add(newSong(), 0, 0, Q, 0) // C4
+    const r = toggleTie(s, s.notes[0].id, Q)
+    s = moveNote(r.song, r.nextId!, 4) // drag the tied note to G4
+    const [a, b] = s.notes
+    expect(isSlide(a, b)).toBe(true)
+    expect(soundingNotes(s)).toEqual([{ midi: 60, start: 0, dur: 2 * Q, bends: [{ start: Q / 2, end: Q, midi: 67 }] }])
+  })
+
+  it('slides to the nearest note of a chord with a different pitch', () => {
+    let s = add(newSong(), 0, 0, Q, 0)
+    s = placeChord(s, 0, Q, Q, [
+      { step: 2, alter: 0 },
+      { step: 4, alter: 0 },
+    ]).song
+    const r = toggleTie(s, s.notes[0].id, Q)
+    expect(s.notes).toHaveLength(3)
+    expect(r.song.notes.find((n) => n.id === r.nextId)?.step).toBe(2) // E4 is closest to C4
+  })
+
+  it('keeps old tie flags working', () => {
+    const old = {
+      ...songOf(newSong()),
+      tracks: [
+        {
+          id: 't',
+          instrument: 'piano',
+          clef: 'treble',
+          notes: [
+            { id: 'a', measure: 0, tick: 0, dur: Q, step: 0, alter: 0, tie: true },
+            { id: 'b', measure: 0, tick: Q, dur: Q, step: 0, alter: 0 },
+          ],
+        },
+      ],
+    }
+    expect(normalizeSong(old as unknown as Song).tracks[0].notes[0].tieTo).toBe('b')
+  })
+})
+
+describe('tracks', () => {
+  it('edits tracks separately and shares song settings', () => {
+    let song = addTrack(songOf(add(newSong(), 0, 0, Q, 0)), 'cello')
+    expect(song.tracks.map((t) => [t.instrument, t.clef])).toEqual([
+      ['square', 'treble'],
+      ['cello', 'bass'],
+    ])
+    song = withPart(song, 1, add(partOf(song, 1), 0, Q, Q, -7))
+    expect(song.tracks.map((t) => t.notes.length)).toEqual([1, 1])
+  })
+
+  it('exports one MIDI track per track, each on its own channel', () => {
+    let song = addTrack(songOf(add(newSong(), 0, 0, Q, 0)), 'cello')
+    song = withPart(song, 1, add(partOf(song, 1), 0, 0, 2 * Q, -7))
+    const midi = new Midi(songToMidi(song))
+    expect(midi.tracks.map((t) => [t.channel, t.instrument.number, t.notes.map((n) => n.midi)])).toEqual([
+      [0, 80, [60]],
+      [1, 42, [48]],
+    ])
+  })
+
+  it('exports slides as one note per pitch', () => {
+    let s = add(newSong(), 0, 0, Q, 0)
+    const r = toggleTie(s, s.notes[0].id, Q)
+    s = moveNote(r.song, r.nextId!, 4)
+    const notes = new Midi(songToMidi(songOf(s))).tracks[0].notes
+    expect(notes.map((n) => [n.midi, n.ticks, n.durationTicks])).toEqual([
+      [60, 0, 480],
+      [67, 480, 480],
+    ])
   })
 })

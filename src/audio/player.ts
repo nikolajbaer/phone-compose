@@ -2,16 +2,21 @@ import * as Tone from 'tone'
 import { CacheStorage, Soundfont, SplendidGrandPiano } from 'smplr'
 import { getInstrument, type InstrumentDef } from '../music/instruments'
 import type { Song } from '../music/song'
-import { soundingNotes } from '../music/song'
+import { partOf, soundingNotes } from '../music/song'
 import { TPQ } from '../music/duration'
 import { toMidi } from '../music/theory'
 import { clefRange, getClef } from '../music/clefs'
 
-// Plays a Song. Timing comes from the Tone.js Transport: notes are scheduled
-// at "measure:beat:0" positions, so tempo, looping and the playhead are
+// Plays a Song: every unmuted track, each through its instrument. Timing
+// comes from the Tone.js Transport, so tempo, looping and the playhead are
 // handled by Tone. The sound comes from a Voice: a sampled instrument from
 // smplr (downloaded the first time it is used) or a Tone.js synth. Both run on
 // Tone's AudioContext so scheduled times line up.
+//
+// Slides bend the pitch of a sounding note. Synths do this with their detune
+// parameter. smplr has no pitch bend, but it creates its audio source
+// synchronously for notes due within its lookahead (which Transport callbacks
+// always are), so the source is caught as it is made and its detune ramped.
 
 export interface LoadStatus {
   state: 'loading' | 'ready' | 'error'
@@ -19,33 +24,61 @@ export interface LoadStatus {
   total: number
 }
 
+/** A pitch glide during a note: seconds from the note's start, to an absolute MIDI pitch. */
+export interface Glide {
+  start: number
+  end: number
+  midi: number
+}
+
 interface Voice {
-  play(midi: number, time: number, duration: number): void
+  play(midi: number, time: number, duration: number, glides?: Glide[]): void
   stopAll(): void
 }
 
+type MonoSynth = Tone.Synth | Tone.FMSynth | Tone.AMSynth
 type AnySynth = Tone.PolySynth<Tone.Synth> | Tone.PolySynth<Tone.FMSynth> | Tone.PolySynth<Tone.AMSynth>
 
-function makeSynth(kind: string): AnySynth {
+/** Build a synth for a kind: polyphonic for normal notes, or a single voice for a slide. */
+function makeSynth(kind: string, mono: true): MonoSynth
+function makeSynth(kind: string, mono?: false): AnySynth
+function makeSynth(kind: string, mono = false): MonoSynth | AnySynth {
   switch (kind) {
-    case 'bell':
-      return new Tone.PolySynth(Tone.FMSynth, {
+    case 'bell': {
+      const o = {
         harmonicity: 3.01,
         modulationIndex: 14,
         envelope: { attack: 0.002, decay: 0.6, sustain: 0.1, release: 0.8 },
         modulationEnvelope: { attack: 0.002, decay: 0.3, sustain: 0, release: 0.4 },
-      })
-    case 'organ':
-      return new Tone.PolySynth(Tone.AMSynth, {
+      }
+      return mono ? new Tone.FMSynth(o) : new Tone.PolySynth(Tone.FMSynth, o)
+    }
+    case 'organ': {
+      const o = {
         harmonicity: 2,
-        oscillator: { type: 'sine' },
+        oscillator: { type: 'sine' as const },
         envelope: { attack: 0.01, decay: 0.1, sustain: 0.9, release: 0.15 },
-      })
-    default:
-      return new Tone.PolySynth(Tone.Synth, {
+      }
+      return mono ? new Tone.AMSynth(o) : new Tone.PolySynth(Tone.AMSynth, o)
+    }
+    default: {
+      const o = {
         oscillator: { type: kind as 'square' | 'triangle' | 'sawtooth' },
         envelope: { attack: 0.005, decay: 0.15, sustain: 0.5, release: 0.2 },
-      })
+      }
+      return mono ? new Tone.Synth(o) : new Tone.PolySynth(Tone.Synth, o)
+    }
+  }
+}
+
+/** Schedule detune ramps (in cents relative to `midi`) for a note's glides. */
+function rampDetune(param: AudioParam | Tone.Signal<'cents'>, midi: number, time: number, glides: Glide[]) {
+  let cents = 0
+  param.setValueAtTime(0, time)
+  for (const g of glides) {
+    param.setValueAtTime(cents, time + g.start)
+    cents = (g.midi - midi) * 100
+    param.linearRampToValueAtTime(cents, time + Math.max(g.end, g.start + 0.01))
   }
 }
 
@@ -102,12 +135,33 @@ class Player {
   private makeVoice(def: InstrumentDef): Voice {
     const src = def.source
     if (src.kind === 'synth') {
+      const volume = SYNTH_VOLUME[src.synth] ?? -12
       const synth = makeSynth(src.synth).toDestination()
-      synth.volume.value = SYNTH_VOLUME[src.synth] ?? -12
+      synth.volume.value = volume
+      const gliding = new Set<MonoSynth>()
       this.setStatus(def.id, { state: 'ready', loaded: 1, total: 1 })
       return {
-        play: (midi, time, duration) => synth.triggerAttackRelease(Tone.Frequency(midi, 'midi').toFrequency(), duration, time),
-        stopAll: () => synth.releaseAll(),
+        play: (midi, time, duration, glides) => {
+          const freq = Tone.Frequency(midi, 'midi').toFrequency()
+          if (!glides?.length) {
+            synth.triggerAttackRelease(freq, duration, time)
+            return
+          }
+          // A one-off voice so its pitch can bend without touching other notes.
+          const one = makeSynth(src.synth, true).toDestination()
+          one.volume.value = volume
+          gliding.add(one)
+          rampDetune(one.detune, midi, time, glides)
+          one.triggerAttackRelease(freq, duration, time)
+          setTimeout(() => {
+            gliding.delete(one)
+            one.dispose()
+          }, (time - Tone.now() + duration + 2) * 1000)
+        },
+        stopAll: () => {
+          synth.releaseAll()
+          gliding.forEach((g) => g.triggerRelease())
+        },
       }
     }
 
@@ -138,7 +192,25 @@ class Player {
       },
     )
     return {
-      play: (midi, time, duration) => inst.start({ note: midi, time, duration }),
+      play: (midi, time, duration, glides) => {
+        if (!glides?.length) {
+          inst.start({ note: midi, time, duration })
+          return
+        }
+        const sources = catchSources(context, () => inst.start({ note: midi, time, duration }))
+        if (sources.length) {
+          for (const s of sources) {
+            if (s.detune) rampDetune(s.detune, midi, time, glides)
+            else rampRate(s.playbackRate, midi, time, glides)
+          }
+        } else {
+          // Could not reach the source: play each slide target as its own note instead.
+          glides.forEach((g, i) => {
+            const end = glides[i + 1]?.end ?? duration
+            inst.start({ note: g.midi, time: time + g.end, duration: Math.max(0.05, end - g.end) })
+          })
+        }
+      },
       stopAll: () => inst.stop(),
     }
   }
@@ -162,9 +234,12 @@ class Player {
 
   // --- the song --------------------------------------------------------------
 
+  private instrumentsOf = (song: Song | null) => new Set(song ? song.tracks.filter((t) => !t.muted).map((t) => t.instrument) : [])
+
   /** (Re)schedule a song. Safe to call while playing: the transport keeps its position. */
   load(song: Song) {
-    if (this.song && this.song.instrument !== song.instrument) this.voice(this.song.instrument).stopAll()
+    const now = this.instrumentsOf(song)
+    for (const id of this.instrumentsOf(this.song)) if (!now.has(id)) this.voice(id).stopAll()
     this.song = song
     const transport = Tone.getTransport()
     transport.cancel(0)
@@ -173,13 +248,18 @@ class Player {
     transport.loop = true
     transport.loopStart = 0
     transport.loopEnd = `${song.measures}:0:0`
-    const voice = this.voice(song.instrument)
     const beatSeconds = 60 / song.tempo
+    const sec = (ticks: number) => (ticks / TPQ) * beatSeconds
     const ticksPerTick = transport.PPQ / TPQ
-    for (const note of soundingNotes(song)) {
-      const seconds = (note.dur / TPQ) * beatSeconds * 0.95
-      transport.schedule((time) => voice.play(note.midi, time, seconds), `${Math.round(note.start * ticksPerTick)}i`)
-    }
+    song.tracks.forEach((track, i) => {
+      if (track.muted) return
+      const voice = this.voice(track.instrument)
+      for (const note of soundingNotes(partOf(song, i))) {
+        const seconds = sec(note.dur) * 0.95
+        const glides = note.bends.map((b) => ({ start: sec(b.start), end: sec(b.end), midi: b.midi }))
+        transport.schedule((time) => voice.play(note.midi, time, seconds, glides), `${Math.round(note.start * ticksPerTick)}i`)
+      }
+    })
   }
 
   async play(song: Song, fromBeat = 0) {
@@ -193,7 +273,7 @@ class Player {
 
   stop() {
     Tone.getTransport().stop()
-    if (this.song) this.voice(this.song.instrument).stopAll()
+    for (const id of this.instrumentsOf(this.song)) this.voice(id).stopAll()
     this.playing = false
   }
 
@@ -206,3 +286,35 @@ class Player {
 }
 
 export const player = new Player()
+
+/**
+ * Like rampDetune, for sources without a detune parameter: scale the playback
+ * rate the sampler already set (which shifts the sample to the right note).
+ */
+function rampRate(param: AudioParam, midi: number, time: number, glides: Glide[]) {
+  const base = param.value
+  let rate = base
+  for (const g of glides) {
+    param.setValueAtTime(rate, time + g.start)
+    rate = base * Math.pow(2, (g.midi - midi) / 12)
+    param.exponentialRampToValueAtTime(rate, time + Math.max(g.end, g.start + 0.01))
+  }
+}
+
+/** Run `f` and collect the buffer sources it creates on `context`. */
+function catchSources(context: AudioContext, f: () => void): AudioBufferSourceNode[] {
+  const ctx = context as AudioContext & { createBufferSource: () => AudioBufferSourceNode }
+  const original = ctx.createBufferSource
+  const caught: AudioBufferSourceNode[] = []
+  ctx.createBufferSource = function (this: AudioContext) {
+    const s = original.call(this)
+    caught.push(s)
+    return s
+  }
+  try {
+    f()
+  } finally {
+    ctx.createBufferSource = original
+  }
+  return caught
+}

@@ -1,6 +1,6 @@
 import { chordName } from '../music/chords'
 import { TPQ, describeTicks } from '../music/duration'
-import type { MeasureEvent, Song } from '../music/song'
+import type { MeasureEvent, Part } from '../music/song'
 import { accidentalsInMeasure, measureEvents, measureTicks } from '../music/song'
 import { getClef, stemUpFor, type ClefDef } from '../music/clefs'
 
@@ -65,7 +65,7 @@ const beamCount = (dur: number) => {
 }
 export { beamCount }
 
-export function layoutSong(song: Song): SongLayout {
+export function layoutSong(song: Part): SongLayout {
   const clef = getClef(song.clef)
   const measures: MeasureLayout[] = []
   let x = 0
@@ -139,7 +139,7 @@ export function hitSlot(layout: SongLayout, px: number): { measure: MeasureLayou
 }
 
 /** x of a play position, in ticks from the start of the song. */
-export function tickToX(song: Song, layout: SongLayout, tick: number): number {
+export function tickToX(song: Part, layout: SongLayout, tick: number): number {
   const len = measureTicks(song)
   const m = Math.min(layout.measures.length - 1, Math.floor(tick / len))
   const measure = layout.measures[m]

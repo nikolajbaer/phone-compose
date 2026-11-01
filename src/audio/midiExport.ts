@@ -2,28 +2,39 @@ import { Midi } from '@tonejs/midi'
 import { getInstrument } from '../music/instruments'
 import type { Song } from '../music/song'
 import { TPQ } from '../music/duration'
-import { soundingNotes } from '../music/song'
+import { partOf, soundingNotes } from '../music/song'
 
-/** Build a standard MIDI file (type 1, one track) for a song. */
+/**
+ * Build a standard MIDI file for a song: one MIDI track per track, each on its
+ * own channel with its instrument. Tied notes are one note; slides become a
+ * note per pitch (MIDI pitch bend only reaches a couple of semitones).
+ */
 export function songToMidi(song: Song): Uint8Array {
   const midi = new Midi()
   midi.name = song.title
   midi.header.setTempo(song.tempo)
   midi.header.timeSignatures.push({ ticks: 0, timeSignature: [song.beatsPerMeasure, 4] })
   midi.header.update()
-  const ppq = midi.header.ppq
-  const track = midi.addTrack()
-  track.name = song.title
-  track.instrument.number = getInstrument(song.instrument).program
-  const scale = ppq / TPQ
-  for (const note of soundingNotes(song)) {
-    track.addNote({
-      midi: note.midi,
-      ticks: Math.round(note.start * scale),
-      durationTicks: Math.round(note.dur * scale),
-      velocity: 0.8,
-    })
-  }
+  const scale = midi.header.ppq / TPQ
+  song.tracks.forEach((t, i) => {
+    const track = midi.addTrack()
+    const inst = getInstrument(t.instrument)
+    track.name = inst.name
+    track.channel = i >= 9 ? i + 1 : i // channel 10 (index 9) is drums
+    track.instrument.number = inst.program
+    for (const note of soundingNotes(partOf(song, i))) {
+      const pieces = [{ midi: note.midi, from: 0 }, ...note.bends.map((b) => ({ midi: b.midi, from: b.end }))]
+      pieces.forEach((p, k) => {
+        const to = pieces[k + 1]?.from ?? note.dur
+        track.addNote({
+          midi: p.midi,
+          ticks: Math.round((note.start + p.from) * scale),
+          durationTicks: Math.round((to - p.from) * scale),
+          velocity: 0.8,
+        })
+      })
+    }
+  })
   return midi.toArray()
 }
 

@@ -3,8 +3,10 @@ import { TPQ, restsFor, type RestPiece } from './duration'
 import { getInstrument } from './instruments'
 import { keyAlter, letterOf, toMidi } from './theory'
 
-// A song is one voice on a treble staff. Notes that start at the same tick of
-// a measure form a chord and share a duration; gaps between chords are rests.
+// A song has tracks; each track is one voice on one staff, with its own
+// instrument and clef. Editing works on a Part: the song's shared settings
+// (meter, key, length) plus one track's notes. Notes that start at the same
+// tick of a measure form a chord and share a duration; gaps are rests.
 
 export interface Note {
   id: string
@@ -18,12 +20,23 @@ export interface Note {
   step: number
   /** -1 flat, 0 natural, +1 sharp. */
   alter: number
-  /** Tied to the same pitch at the next position (which may be in the next measure). */
-  tie?: boolean
+  /**
+   * Id of the note this one connects to, starting right where this one ends:
+   * a tie if it has the same pitch, a slide (glissando) if not.
+   */
+  tieTo?: string
 }
 
 /** An id from INSTRUMENTS (instruments.ts). */
 export type InstrumentId = string
+
+export interface Track {
+  id: string
+  instrument: InstrumentId
+  clef: ClefId
+  notes: Note[]
+  muted?: boolean
+}
 
 export interface Song {
   id: string
@@ -33,10 +46,20 @@ export interface Song {
   /** Key signature: sharps (+) or flats (-). */
   fifths: number
   measures: number
+  tracks: Track[]
+  createdAt: number
+  updatedAt: number
+}
+
+/** One track seen with the song's shared settings: what a staff shows and edits. */
+export interface Part {
+  tempo: number
+  beatsPerMeasure: number
+  fifths: number
+  measures: number
   instrument: InstrumentId
   clef: ClefId
   notes: Note[]
-  createdAt: number
   updatedAt: number
 }
 
@@ -52,6 +75,10 @@ export interface NewSongOptions {
 
 export const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36)
 
+export function newTrack(instrument: InstrumentId, clef?: ClefId): Track {
+  return { id: uid(), instrument, clef: clef ?? getInstrument(instrument).clef, notes: [] }
+}
+
 export function createSong(opts: NewSongOptions): Song {
   const now = Date.now()
   return {
@@ -61,28 +88,117 @@ export function createSong(opts: NewSongOptions): Song {
     beatsPerMeasure: opts.beatsPerMeasure,
     fifths: opts.fifths,
     measures: opts.measures ?? 4,
-    instrument: opts.instrument,
-    clef: opts.clef ?? getInstrument(opts.instrument).clef,
-    notes: [],
+    tracks: [newTrack(opts.instrument, opts.clef)],
     createdAt: now,
     updatedAt: now,
   }
 }
 
-/** Upgrade songs saved before durations existed (notes had a `beat`, all quarters). */
-export function normalizeSong(song: Song): Song {
-  const notes = song.notes.map((n) => {
-    const old = n as Note & { beat?: number }
-    if (typeof old.tick === 'number' && typeof old.dur === 'number') return n
-    const { beat, ...rest } = old
-    return { ...rest, tick: (beat ?? 0) * TPQ, dur: TPQ }
-  })
-  return { ...song, clef: song.clef ?? getInstrument(song.instrument).clef, notes }
+// --- song <-> part -------------------------------------------------------------
+
+export function partOf(song: Song, track: number): Part {
+  const t = song.tracks[track] ?? song.tracks[0]
+  return {
+    tempo: song.tempo,
+    beatsPerMeasure: song.beatsPerMeasure,
+    fifths: song.fifths,
+    measures: song.measures,
+    instrument: t.instrument,
+    clef: t.clef,
+    notes: t.notes,
+    updatedAt: song.updatedAt,
+  }
 }
 
-export const measureTicks = (song: Song) => song.beatsPerMeasure * TPQ
+/** Write an edited part back into its track (and the shared settings into the song). */
+export function withPart(song: Song, track: number, part: Part): Song {
+  return {
+    ...song,
+    tempo: part.tempo,
+    beatsPerMeasure: part.beatsPerMeasure,
+    fifths: part.fifths,
+    measures: part.measures,
+    tracks: song.tracks.map((t, i) => (i === track ? { ...t, instrument: part.instrument, clef: part.clef, notes: part.notes } : t)),
+    updatedAt: Date.now(),
+  }
+}
 
-const touch = (song: Song, patch: Partial<Song>): Song => ({ ...song, ...patch, updatedAt: Date.now() })
+/** Apply a part edit to every track (for key, meter and length changes). */
+export function editAllParts(song: Song, f: (p: Part) => Part): Song {
+  let out = song
+  song.tracks.forEach((_, i) => (out = withPart(out, i, f(partOf(out, i)))))
+  return out
+}
+
+const TRACK_ORDER: InstrumentId[] = ['strings', 'acoustic_bass', 'piano', 'flute', 'cello', 'nylon_guitar']
+
+export function addTrack(song: Song, instrument?: InstrumentId): Song {
+  const used = new Set(song.tracks.map((t) => t.instrument))
+  const pick = instrument ?? TRACK_ORDER.find((i) => !used.has(i)) ?? 'piano'
+  return { ...song, tracks: [...song.tracks, newTrack(pick)], updatedAt: Date.now() }
+}
+
+export function removeTrack(song: Song, track: number): Song {
+  if (song.tracks.length <= 1) return song
+  return { ...song, tracks: song.tracks.filter((_, i) => i !== track), updatedAt: Date.now() }
+}
+
+export function setTrackMuted(song: Song, track: number, muted: boolean): Song {
+  return { ...song, tracks: song.tracks.map((t, i) => (i === track ? { ...t, muted } : t)), updatedAt: Date.now() }
+}
+
+export const songNoteCount = (song: Song) => song.tracks.reduce((a, t) => a + t.notes.length, 0)
+
+// --- upgrading saved songs -----------------------------------------------------
+
+type OldNote = Note & { beat?: number; tie?: boolean }
+type OldSong = Partial<Song> & { notes?: OldNote[]; instrument?: string; clef?: ClefId }
+
+function normalizeNotes(notes: OldNote[], beatsPerMeasure: number): Note[] {
+  const timed = notes.map((n) => {
+    if (typeof n.tick === 'number' && typeof n.dur === 'number') return n
+    const { beat, ...rest } = n
+    return { ...rest, tick: (beat ?? 0) * TPQ, dur: TPQ }
+  })
+  // Ties used to be a flag meaning "same pitch at the next position".
+  const len = beatsPerMeasure * TPQ
+  return timed.map(({ tie, ...n }) => {
+    if (!tie || n.tieTo) return n
+    const end = n.tick + n.dur
+    const at = end >= len ? { measure: n.measure + 1, tick: 0 } : { measure: n.measure, tick: end }
+    const t = timed.find((x) => x.measure === at.measure && x.tick === at.tick && x.step === n.step && x.alter === n.alter)
+    return t ? { ...n, tieTo: t.id } : n
+  })
+}
+
+/** Upgrade songs saved by earlier versions: beats to ticks, tie flags to links, one staff to tracks. */
+export function normalizeSong(raw: Song): Song {
+  const old = raw as unknown as OldSong & Song
+  const tracks: Track[] = old.tracks ?? [
+    {
+      id: uid(),
+      instrument: old.instrument ?? 'piano',
+      clef: old.clef ?? getInstrument(old.instrument ?? 'piano').clef,
+      notes: old.notes ?? [],
+    },
+  ]
+  const { notes: _n, instrument: _i, clef: _c, ...rest } = old
+  void _n
+  void _i
+  void _c
+  return {
+    ...(rest as Song),
+    tracks: tracks.map((t) => ({
+      ...t,
+      clef: t.clef ?? getInstrument(t.instrument).clef,
+      notes: normalizeNotes(t.notes as OldNote[], old.beatsPerMeasure),
+    })),
+  }
+}
+
+export const measureTicks = (song: Part) => song.beatsPerMeasure * TPQ
+
+const touch = (song: Part, patch: Partial<Part>): Part => ({ ...song, ...patch, updatedAt: Date.now() })
 
 export interface Chord {
   tick: number
@@ -92,7 +208,7 @@ export interface Chord {
 
 export type MeasureEvent = ({ kind: 'chord' } & Chord) | ({ kind: 'rest' } & RestPiece)
 
-export function chordsInMeasure(song: Song, measure: number): Chord[] {
+export function chordsInMeasure(song: Part, measure: number): Chord[] {
   const byTick = new Map<number, Note[]>()
   for (const n of song.notes) {
     if (n.measure !== measure) continue
@@ -104,7 +220,7 @@ export function chordsInMeasure(song: Song, measure: number): Chord[] {
 }
 
 /** Chords and the rests between them, in time order, filling the measure. */
-export function measureEvents(song: Song, measure: number): MeasureEvent[] {
+export function measureEvents(song: Part, measure: number): MeasureEvent[] {
   const out: MeasureEvent[] = []
   let p = 0
   for (const c of chordsInMeasure(song, measure)) {
@@ -117,7 +233,7 @@ export function measureEvents(song: Song, measure: number): MeasureEvent[] {
   return out
 }
 
-export type EditResult = { song: Song; error?: undefined } | { song: Song; error: string }
+export type EditResult = { song: Part; error?: undefined } | { song: Part; error: string }
 
 /** Clear room for a chord at [tick, tick+dur): later chords starting inside it are overwritten. */
 function clearSpan(notes: Note[], measure: number, tick: number, dur: number, keepTick: boolean) {
@@ -129,7 +245,7 @@ function clearSpan(notes: Note[], measure: number, tick: number, dur: number, ke
  * (keeping the chord's length); otherwise a new chord of `dur` is written,
  * overwriting anything it covers, like note input in MuseScore.
  */
-export function placeNote(song: Song, measure: number, tick: number, dur: number, step: number, alterOverride?: number): EditResult {
+export function placeNote(song: Part, measure: number, tick: number, dur: number, step: number, alterOverride?: number): EditResult {
   const alter = alterOverride ?? keyAlter(letterOf(step), song.fifths)
   const chord = song.notes.filter((n) => n.measure === measure && n.tick === tick)
   if (chord.length) {
@@ -151,7 +267,7 @@ export function placeNote(song: Song, measure: number, tick: number, dur: number
  * otherwise a new chord of `dur` is written, like placeNote.
  */
 export function placeChord(
-  song: Song,
+  song: Part,
   measure: number,
   tick: number,
   dur: number,
@@ -176,7 +292,7 @@ export function placeChord(
 }
 
 /** Change the length of the chord a note belongs to. */
-export function setChordDuration(song: Song, noteId: string, dur: number): EditResult {
+export function setChordDuration(song: Part, noteId: string, dur: number): EditResult {
   const note = song.notes.find((n) => n.id === noteId)
   if (!note) return { song }
   if (note.dur === dur) return { song }
@@ -187,12 +303,12 @@ export function setChordDuration(song: Song, noteId: string, dur: number): EditR
   return { song: touch(song, { notes }) }
 }
 
-export function removeNote(song: Song, id: string): Song {
+export function removeNote(song: Part, id: string): Part {
   return touch(song, { notes: song.notes.filter((n) => n.id !== id) })
 }
 
 /** Move a note to another step (re-spelled by the key); drops it if that spot is taken. */
-export function moveNote(song: Song, id: string, step: number): Song {
+export function moveNote(song: Part, id: string, step: number): Part {
   const note = song.notes.find((n) => n.id === id)
   if (!note) return song
   const taken = song.notes.some((n) => n.id !== id && n.measure === note.measure && n.tick === note.tick && n.step === step)
@@ -202,37 +318,42 @@ export function moveNote(song: Song, id: string, step: number): Song {
   })
 }
 
-export function setMeasures(song: Song, measures: number): Song {
+export function setMeasures(song: Part, measures: number): Part {
   const m = Math.max(1, Math.min(256, measures))
   return touch(song, { measures: m, notes: song.notes.filter((n) => n.measure < m) })
 }
 
-export function setBeatsPerMeasure(song: Song, beats: number): Song {
+export function setBeatsPerMeasure(song: Part, beats: number): Part {
   const len = beats * TPQ
   return touch(song, { beatsPerMeasure: beats, notes: song.notes.filter((n) => n.tick + n.dur <= len) })
 }
 
 /** Change key and re-spell every note to the new key signature. */
-export function setKey(song: Song, fifths: number): Song {
+export function setKey(song: Part, fifths: number): Part {
   return touch(song, { fifths, notes: song.notes.map((n) => ({ ...n, alter: keyAlter(letterOf(n.step), fifths) })) })
 }
 
-export function updateSong(song: Song, patch: Partial<Pick<Song, 'title' | 'tempo' | 'clef'>>): Song {
+export function updateSong(song: Part, patch: Partial<Pick<Part, 'tempo' | 'clef'>>): Part {
   return touch(song, patch)
 }
 
 /** Switch instrument, and to the clef that instrument is written in. */
-export function setInstrument(song: Song, instrument: InstrumentId): Song {
+export function setInstrument(song: Part, instrument: InstrumentId): Part {
   return touch(song, { instrument, clef: getInstrument(instrument).clef })
 }
 
 // --- accidentals ---------------------------------------------------------------
 
-/** Give a note (and the notes tied on from it) an explicit sharp, flat or natural. */
-export function setAccidental(song: Song, noteId: string, alter: number): Song {
+/** Give a note (and the notes tied on from it at the same pitch) an explicit sharp, flat or natural. */
+export function setAccidental(song: Part, noteId: string, alter: number): Part {
   const ids = new Set<string>()
-  for (let n = song.notes.find((x) => x.id === noteId); n && !ids.has(n.id); n = tieTarget(song, n)) ids.add(n.id)
-  return touch(song, { notes: song.notes.map((n) => (ids.has(n.id) ? { ...n, alter } : n)) })
+  let n = song.notes.find((x) => x.id === noteId)
+  while (n && !ids.has(n.id)) {
+    ids.add(n.id)
+    const t = tieTarget(song, n)
+    n = t && noteMidi(t) === noteMidi(n) ? t : undefined
+  }
+  return touch(song, { notes: song.notes.map((x) => (ids.has(x.id) ? { ...x, alter } : x)) })
 }
 
 /**
@@ -240,7 +361,7 @@ export function setAccidental(song: Song, noteId: string, alter: number): Song {
  * from the key signature or from an earlier accidental on the same line or
  * space in the measure. A note tied over from the previous measure shows none.
  */
-export function accidentalsInMeasure(song: Song, measure: number): Set<string> {
+export function accidentalsInMeasure(song: Part, measure: number): Set<string> {
   const show = new Set<string>()
   const state = new Map<number, number>()
   const continued = tiedInto(song)
@@ -254,72 +375,112 @@ export function accidentalsInMeasure(song: Song, measure: number): Set<string> {
   return show
 }
 
-// --- ties ----------------------------------------------------------------------
+// --- ties and slides -----------------------------------------------------------
 
 /** Where a note ends: the measure and tick right after it. */
-function endPosition(song: Song, n: Note): { measure: number; tick: number } {
+function endPosition(song: Part, n: Note): { measure: number; tick: number } {
   const end = n.tick + n.dur
   return end >= measureTicks(song) ? { measure: n.measure + 1, tick: 0 } : { measure: n.measure, tick: end }
 }
 
-/** The note a tie from `n` lands on: same pitch, starting where `n` ends. */
-export function tieTarget(song: Song, n: Note): Note | undefined {
-  if (!n.tie) return undefined
+/** The note `n` is tied or slides to, if it still starts right where `n` ends. */
+export function tieTarget(song: Part, n: Note): Note | undefined {
+  if (!n.tieTo) return undefined
+  const t = song.notes.find((x) => x.id === n.tieTo)
+  if (!t) return undefined
   const at = endPosition(song, n)
-  return song.notes.find((x) => x.measure === at.measure && x.tick === at.tick && x.step === n.step && x.alter === n.alter)
+  return t.measure === at.measure && t.tick === at.tick ? t : undefined
 }
 
-/** Ids of notes that a tie arrives at. */
-export function tiedInto(song: Song): Set<string> {
+/** A connection is a tie when both notes have the same pitch, otherwise a slide. */
+export function isSlide(from: Note, to: Note): boolean {
+  return noteMidi(from) !== noteMidi(to)
+}
+
+/** Ids of notes that a same-pitch tie arrives at. */
+export function tiedInto(song: Part): Set<string> {
   const out = new Set<string>()
   for (const n of song.notes) {
     const t = tieTarget(song, n)
-    if (t) out.add(t.id)
+    if (t && !isSlide(n, t)) out.add(t.id)
   }
   return out
 }
 
 /**
- * Tie a note to the next position, or untie it. If nothing of that pitch
- * starts there yet it is written: added to the chord there, or as a new note
- * of `dur` if there is a rest. Returns the id of the note tied to.
+ * Connect a note to the next position, or disconnect it. If the same pitch
+ * starts there it is a tie; if a chord without that pitch starts there it is
+ * a slide to its nearest note; if there is a rest, the same pitch is written
+ * there (at `dur`) and tied, so it can then be dragged to make a slide.
+ * Returns the id of the note connected to.
  */
-export function toggleTie(song: Song, noteId: string, dur: number): EditResult & { nextId?: string } {
+export function toggleTie(song: Part, noteId: string, dur: number): EditResult & { nextId?: string } {
   const n = song.notes.find((x) => x.id === noteId)
   if (!n) return { song }
-  if (n.tie) return { song: touch(song, { notes: song.notes.map((x) => (x.id === noteId ? { ...x, tie: false } : x)) }) }
+  if (tieTarget(song, n)) {
+    return { song: touch(song, { notes: song.notes.map((x) => (x.id === noteId ? { ...x, tieTo: undefined } : x)) }) }
+  }
   const at = endPosition(song, n)
   if (at.measure >= song.measures) return { song, error: 'Add a measure to tie into.' }
-  let next = song.notes
-  let target = next.find((x) => x.measure === at.measure && x.tick === at.tick && x.step === n.step)
+  let notes = song.notes
+  const there = notes.filter((x) => x.measure === at.measure && x.tick === at.tick)
+  let target =
+    there.find((x) => x.step === n.step) ??
+    [...there].sort((a, b) => Math.abs(noteMidi(a) - noteMidi(n)) - Math.abs(noteMidi(b) - noteMidi(n)))[0]
   if (!target) {
     const r = placeNote(song, at.measure, at.tick, dur, n.step, n.alter)
     if (r.error) return r
-    next = r.song.notes
-    target = next.find((x) => x.measure === at.measure && x.tick === at.tick && x.step === n.step)!
+    notes = r.song.notes
+    target = notes.find((x) => x.measure === at.measure && x.tick === at.tick && x.step === n.step)!
   }
   const targetId = target.id
-  return {
-    song: touch(song, {
-      notes: next.map((x) => (x.id === noteId ? { ...x, tie: true } : x.id === targetId ? { ...x, alter: n.alter } : x)),
-    }),
-    nextId: targetId,
-  }
+  return { song: touch(song, { notes: notes.map((x) => (x.id === noteId ? { ...x, tieTo: targetId } : x)) }), nextId: targetId }
 }
 
-/** What actually sounds: tied notes merged into one, in song ticks. */
-export function soundingNotes(song: Song): { midi: number; start: number; dur: number }[] {
-  const continued = tiedInto(song)
-  const out: { midi: number; start: number; dur: number }[] = []
+export interface Bend {
+  /** Ticks from the note's start where the glide begins and where it arrives. */
+  start: number
+  end: number
+  midi: number
+}
+
+export interface SoundingNote {
+  midi: number
+  /** Ticks from the start of the song. */
+  start: number
+  dur: number
+  /** Slides: pitch glides during the note. */
+  bends: Bend[]
+}
+
+/**
+ * What actually sounds: a note and everything tied or slid on from it become
+ * one note; each slide glides over the second half of the note before it.
+ */
+export function soundingNotes(song: Part): SoundingNote[] {
+  const linked = new Set<string>()
   for (const n of song.notes) {
-    if (continued.has(n.id)) continue
+    const t = tieTarget(song, n)
+    if (t) linked.add(t.id)
+  }
+  const out: SoundingNote[] = []
+  for (const n of song.notes) {
+    if (linked.has(n.id)) continue
     let dur = n.dur
+    let segment = n.dur
+    let prev = n
+    const bends: Bend[] = []
     const seen = new Set([n.id])
     for (let t = tieTarget(song, n); t && !seen.has(t.id); t = tieTarget(song, t)) {
       seen.add(t.id)
+      if (isSlide(prev, t)) {
+        bends.push({ start: dur - segment / 2, end: dur, midi: noteMidi(t) })
+        segment = t.dur
+      } else segment += t.dur
       dur += t.dur
+      prev = t
     }
-    out.push({ midi: noteMidi(n), start: absoluteTick(song, n), dur })
+    out.push({ midi: noteMidi(n), start: absoluteTick(song, n), dur, bends })
   }
   return out.sort((a, b) => a.start - b.start || a.midi - b.midi)
 }
@@ -327,4 +488,4 @@ export function soundingNotes(song: Song): { midi: number; start: number; dur: n
 export const noteMidi = (n: Note) => toMidi(n.step, n.alter)
 
 /** Start of a note in ticks from the beginning of the song. */
-export const absoluteTick = (song: Song, n: Note) => n.measure * measureTicks(song) + n.tick
+export const absoluteTick = (song: Part, n: Note) => n.measure * measureTicks(song) + n.tick

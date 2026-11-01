@@ -1,4 +1,4 @@
-import type { Song } from '../music/song'
+import { songNoteCount, type Song } from '../music/song'
 
 export function Home({ songs, onNew, onOpen, onDelete }: { songs: Song[]; onNew: () => void; onOpen: (s: Song) => void; onDelete: (s: Song) => void }) {
   return (
@@ -25,7 +25,7 @@ export function Home({ songs, onNew, onOpen, onDelete }: { songs: Song[]; onNew:
                 <button className="song-open" onClick={() => onOpen(s)}>
                   <strong>{s.title}</strong>
                   <span>
-                    {s.notes.length} notes · {s.measures} bars · {s.tempo} bpm · {new Date(s.updatedAt).toLocaleDateString()}
+                    {songNoteCount(s)} notes · {s.tracks.length} {s.tracks.length === 1 ? 'track' : 'tracks'} · {s.measures} bars · {s.tempo} bpm · {new Date(s.updatedAt).toLocaleDateString()}
                   </span>
                 </button>
                 <button
