@@ -4,7 +4,7 @@ import type { Chord, Note, Part } from '../music/song'
 import { MAX_POS, MIN_POS, MIDDLE_POS, clampPos, keyAlter, letterOf, pitchName } from '../music/theory'
 import { clefPosToStep, clefStepToPos, getClef, stemUpFor, type ClefDef } from '../music/clefs'
 import { isSlide, tieTarget } from '../music/song'
-import { SPACE, STEP, beamCount, hitSlot, layoutStaves, tickToX, type Slot, type SongLayout } from './staffLayout'
+import { SPACE, STEP, beamCount, beatAtX, hitSlot, layoutStaves, tickToX, xOfTick, type Slot, type SongLayout } from './staffLayout'
 import { chordName } from '../music/chords'
 
 // The score: one staff (treble, bass, alto... per the song's clef) drawn in SVG with SMuFL glyphs from the Bravura
@@ -70,12 +70,16 @@ function StaffLines({ width }: { width: number }) {
 const KEY_SHARP_POS = [8, 5, 9, 6, 3, 7, 4]
 const KEY_FLAT_POS = [4, 7, 3, 6, 2, 5, 1]
 
-export function StaffHeader({ song, zoom = 1 }: { song: Part; zoom?: number }) {
-  const clef = getClef(song.clef)
-  const n = Math.abs(song.fifths)
+const headerGeometry = (fifths: number) => {
+  const n = Math.abs(fifths)
   const keyX = 6 + 3.2 * SPACE // clefs are about 2.8 spaces wide
   const timeX = keyX + n * 0.95 * SPACE + (n ? 0.4 * SPACE : 0)
-  const width = timeX + 2.1 * SPACE
+  return { n, keyX, timeX, width: timeX + 2.1 * SPACE }
+}
+
+export function StaffHeader({ song, zoom = 1 }: { song: Part; zoom?: number }) {
+  const clef = getClef(song.clef)
+  const { n, keyX, timeX, width } = headerGeometry(song.fifths)
   const digits = (v: number) => String(v).split('').map((d) => GLYPH.timeSig(Number(d))).join('')
   return (
     <svg className="staff-header" width={width * zoom} height={STAFF_HEIGHT * zoom} viewBox={`0 0 ${width} ${STAFF_HEIGHT}`}>
@@ -265,6 +269,8 @@ interface StaffRowProps {
   labels: { x: number; text: string; key: string }[]
   /** Print measure numbers (only on the top staff). */
   numbers: boolean
+  /** Bars to highlight (a phrase being chosen). */
+  highlight?: { from: number; to: number } | null
   playheadRef: (el: SVGLineElement | null) => void
   /** Length in ticks of the note the palette will write. */
   inputDur: number
@@ -281,7 +287,7 @@ interface StaffRowProps {
 
 /** One staff: its header, measures and touch input. */
 function StaffRow(props: StaffRowProps) {
-  const { song, layout, zoom, labels, numbers, playheadRef, inputDur, selectedId, onSelect, onPlace, onMove, onPreview, chordInput, inputAlter = null } = props
+  const { song, layout, zoom, labels, numbers, highlight, playheadRef, inputDur, selectedId, onSelect, onPlace, onMove, onPreview, chordInput, inputAlter = null } = props
   const svgRef = useRef<SVGSVGElement>(null)
   const [press, setPress] = useState<Press | null>(null)
   const pressRef = useRef<Press | null>(null)
@@ -378,6 +384,15 @@ function StaffRow(props: StaffRowProps) {
                   height={STAFF_HEIGHT}
                 />
               )),
+            )}
+            {highlight && layout.measures[highlight.from] && (
+              <rect
+                className="phrase-hl"
+                x={layout.measures[highlight.from].x}
+                y={0}
+                width={(layout.measures[Math.min(highlight.to, layout.measures.length - 1)]?.x ?? 0) + (layout.measures[Math.min(highlight.to, layout.measures.length - 1)]?.width ?? 0) - layout.measures[highlight.from].x}
+                height={STAFF_HEIGHT}
+              />
             )}
             {/* faint guides for the ledger-line positions above and below */}
             {[-4, -2, 10, 12].map((p) => (
@@ -567,6 +582,11 @@ interface ScoreProps {
   /** Chord input for a staff, or null. */
   chordInput?: (staff: number) => StaffRowProps['chordInput']
   inputAlter?: number | null
+  /** The song's chord progression, shown in a lane above the staves. */
+  progression?: { measure: number; tick: number; label: string; key: string }[]
+  /** Tap on the chord lane: the bar and beat tapped. */
+  onChordLane?: (measure: number, tick: number) => void
+  highlight?: { from: number; to: number } | null
 }
 
 const GRAND_ZOOM = 0.66
@@ -630,10 +650,11 @@ export function Score(props: ScoreProps) {
     return () => cancelAnimationFrame(raf)
   }, [getPlayBeat, parts, layouts, zoom])
 
-  const height = parts.length * STAFF_HEIGHT * zoom
+  const height = parts.length * STAFF_HEIGHT * zoom + (props.onChordLane ? LANE_H : 0)
   // The brace spans from the top line of the first staff to the bottom line of the last.
-  const braceTop = y(8) * zoom
-  const braceBottom = (STAFF_HEIGHT * (parts.length - 1) + y(0)) * zoom
+  const laneH = props.onChordLane ? LANE_H : 0
+  const braceTop = laneH + y(8) * zoom
+  const braceBottom = laneH + (STAFF_HEIGHT * (parts.length - 1) + y(0)) * zoom
   return (
     <div className="staff-row">
       <div className="staff-scroll" ref={scrollRef}>
@@ -645,6 +666,16 @@ export function Score(props: ScoreProps) {
             </svg>
           )}
           <div className="staff-stack">
+            {props.onChordLane && (
+              <ChordLane
+                layout={layouts[0]}
+                zoom={zoom}
+                offset={headerGeometry(parts[0].fifths).width * zoom}
+                chords={props.progression ?? []}
+                highlight={props.highlight}
+                onTap={props.onChordLane}
+              />
+            )}
             {parts.map((part, k) => (
               <StaffRow
                 key={k}
@@ -653,6 +684,7 @@ export function Score(props: ScoreProps) {
                 zoom={zoom}
                 labels={k === 0 ? labels : []}
                 numbers={k === 0}
+                highlight={props.highlight}
                 playheadRef={(el) => (playheads.current[k] = el)}
                 inputDur={props.inputDur}
                 selectedId={props.selectedId}
@@ -686,4 +718,72 @@ function bracePath(w: number, top: number, bottom: number) {
     `C${w * 1.5},${m - h * 0.12} ${w * 0.5},${top + h * 0.08} ${w},${top}`,
     'Z',
   ].join(' ')
+}
+
+const LANE_H = 34
+
+/** The chord progression above the staves: one chip per chord; tap to set a chord at a bar and beat. */
+function ChordLane({
+  layout,
+  zoom,
+  offset,
+  chords,
+  highlight,
+  onTap,
+}: {
+  layout: SongLayout
+  zoom: number
+  offset: number
+  chords: { measure: number; tick: number; label: string; key: string }[]
+  highlight?: { from: number; to: number } | null
+  onTap: (measure: number, tick: number) => void
+}) {
+  const ref = useRef<SVGSVGElement>(null)
+  const width = layout.width * zoom
+  const withChord = new Set(chords.map((c) => c.measure))
+  const tap = (e: React.MouseEvent) => {
+    const r = ref.current!.getBoundingClientRect()
+    const at = beatAtX(layout, (e.clientX - r.left) / zoom)
+    if (at) onTap(at.measure, at.tick)
+  }
+  return (
+    <div className="staff-line chord-lane-row">
+      <div className="lane-title" style={{ width: offset }}>
+        Chords
+      </div>
+      <svg ref={ref} className="chord-lane" width={width} height={LANE_H} onClick={tap} role="button" aria-label="Chord lane">
+        {highlight && layout.measures[highlight.from] && (
+          <rect
+            className="phrase-hl"
+            x={layout.measures[highlight.from].x * zoom}
+            y={0}
+            width={((layout.measures[Math.min(highlight.to, layout.measures.length - 1)]?.x ?? 0) + (layout.measures[Math.min(highlight.to, layout.measures.length - 1)]?.width ?? 0) - layout.measures[highlight.from].x) * zoom}
+            height={LANE_H}
+          />
+        )}
+        {layout.measures.map((m) => (
+          <g key={m.index}>
+            <line className="lane-bar" x1={(m.x + m.width) * zoom - 0.5} x2={(m.x + m.width) * zoom - 0.5} y1={6} y2={LANE_H - 6} />
+            {!withChord.has(m.index) && (
+              <text className="lane-empty" x={(m.x + 14) * zoom} y={LANE_H / 2 + 5}>
+                +
+              </text>
+            )}
+          </g>
+        ))}
+        {chords.map((c) => {
+          const x = xOfTick(layout, c.measure, c.tick) * zoom
+          const w = Math.max(30, c.label.length * 9 + 14)
+          return (
+            <g key={c.key} className="lane-chip">
+              <rect x={x} y={5} width={w} height={LANE_H - 10} rx={8} />
+              <text x={x + w / 2} y={LANE_H / 2 + 5}>
+                {c.label}
+              </text>
+            </g>
+          )
+        })}
+      </svg>
+    </div>
+  )
 }

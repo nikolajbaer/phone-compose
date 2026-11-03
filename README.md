@@ -46,6 +46,17 @@ you write on by tapping, in the spirit of BeepBox but with real notes instead of
   tapping the treble staff writes the chord in the right hand and drops its bass note (the inversion's
   bass) an octave or so lower into the bass clef; tapping the bass staff writes the whole chord there.
   The chord symbol names what both hands play together.
+- **Arrange** (✦ on the top bar): work at the level of the song.
+  - **Chords**: a chord lane above the score shows the progression; tap it at any bar or beat to set a
+    chord there (it lasts until the next one). Chords can be suggested from a melody (the chord of the key
+    that best fits each bar) or filled from common progressions (I–V–vi–IV, ii–V–I, …).
+  - **Parts**: write a supporting part from the progression into a track (or a new one): block chords,
+    comping, arpeggios, Alberti bass, bass roots, root–fifth, walking bass or scale runs, in a chosen
+    rhythm and range of bars. It is written as ordinary notes, so you can change anything afterwards;
+    writing again replaces those bars.
+  - **Phrases**: choose bars (highlighted on the score), then repeat them right after, copy them to
+    another track (fitted to its range, an octave up or down, or as a diatonic harmony a 3rd or 6th
+    away), or name and save them to insert anywhere later.
 - **Editing**: tap a note to select it; the palette then changes that chord's length and 🗑 deletes the
   note. Drag a note up or down to move it. Undo with ↶.
 - **Playback**: play/stop, looping, a playhead that the score follows, and a tempo stepper. Timing comes
@@ -87,6 +98,9 @@ repository for its terms before distributing it in other ways.
 - `src/music/clefs.ts` — clefs and how they map pitches to staff positions.
 - `src/music/chords.ts` — chord symbol naming.
 - `src/music/chordBuilder.ts` — building chords from root, type and inversion; chords of a key.
+- `src/music/progression.ts` — the chord progression, presets and suggesting chords for a melody.
+- `src/music/arrange.ts` — generating supporting parts from the progression.
+- `src/music/phrases.ts` — taking, transposing and inserting phrases.
 - `src/music/song.ts` — the song model (a song of tracks; a Part is one track with the song's settings,
   which is what the staff edits) and pure editing functions (place / move / remove notes, change
   lengths, ties, accidentals, key, meter, instrument and clef). Songs saved before note lengths existed are upgraded on load.
@@ -102,6 +116,7 @@ repository for its terms before distributing it in other ways.
 - `src/components/DurationPalette.tsx` — the note-length palette.
 - `src/components/ChordPicker.tsx` — the chord picker sheet.
 - `src/components/TrackBar.tsx` — the track tabs.
+- `src/components/ArrangeSheet.tsx` — the Arrange sheet (chords, parts, phrases).
 - `src/components/Editor.tsx`, `Home.tsx`, `NewSongForm.tsx` — screens and menus.
 
 Notes store a diatonic step plus an alteration rather than a MIDI number, so the score can always be

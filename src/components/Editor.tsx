@@ -35,6 +35,9 @@ import { ChordPicker } from './ChordPicker'
 import { diatonicChords, specName, voiceChord, type ChordSpec } from '../music/chordBuilder'
 import { Score } from './Staff'
 import { TrackBar } from './TrackBar'
+import { ArrangeSheet } from './ArrangeSheet'
+import { chordAt, setChordAt, sortedProgression } from '../music/progression'
+import { TPQ } from '../music/duration'
 
 interface EditorProps {
   song: Song
@@ -59,6 +62,10 @@ export function Editor({ song, onChange, onNewSong, onHome }: EditorProps) {
   songRef.current = song
   const [active, setActive] = useState(0)
   const [trackSheet, setTrackSheet] = useState(false)
+  const [arrangeOpen, setArrangeOpen] = useState(false)
+  const [highlight, setHighlight] = useState<{ from: number; to: number } | null>(null)
+  /** The bar and beat being set from the chord lane. */
+  const [laneTarget, setLaneTarget] = useState<{ measure: number; tick: number } | null>(null)
   /** The staff last touched (0 = top), for a grand staff. */
   const [staffIdx, setStaffIdx] = useState(0)
   const track = Math.min(active, song.tracks.length - 1)
@@ -208,10 +215,26 @@ export function Editor({ song, onChange, onNewSong, onHome }: EditorProps) {
     }
   }
 
-  /** The picker's main button: replace the selected chord, or turn on chord input. */
+  const laneEntry = laneTarget && (song.progression ?? []).find((c) => c.measure === laneTarget.measure && c.tick === laneTarget.tick)
+  const openLane = (measure: number, tick: number) => {
+    const here = chordAt(song, measure * song.beatsPerMeasure * TPQ + tick)
+    if (here) setChordSpec(here.spec)
+    setLaneTarget({ measure, tick })
+    setPickerOpen(true)
+  }
+  const closePicker = () => {
+    setPickerOpen(false)
+    setLaneTarget(null)
+  }
+  const progressionChips = sortedProgression(song).map((c) => ({ measure: c.measure, tick: c.tick, label: specName(c.spec), key: c.id }))
+
+  /** The picker's main button: set a progression chord, replace the selected chord, or turn on chord input. */
   const applyChord = () => {
     setPickerOpen(false)
-    if (selected) {
+    if (laneTarget) {
+      edit(setChordAt(song, laneTarget.measure, laneTarget.tick, chordSpec))
+      setLaneTarget(null)
+    } else if (selected) {
       const chord = part.notes.filter((n) => n.measure === selected.measure && n.tick === selected.tick)
       const bass = Math.min(...chord.map((n) => n.step))
       const written = writeChord(selStaff, selected.measure, selected.tick, selected.dur, bass)
@@ -240,6 +263,9 @@ export function Editor({ song, onChange, onNewSong, onHome }: EditorProps) {
           onChange={(e) => onChange({ ...song, title: e.target.value, updatedAt: Date.now() })}
           aria-label="Song title"
         />
+        <button className="btn arrange-btn" onClick={() => setArrangeOpen(true)}>
+          ✦ Arrange
+        </button>
         <button className="btn icon" onClick={undo} disabled={!history.current.length} aria-label="Undo">
           ↶
         </button>
@@ -280,6 +306,9 @@ export function Editor({ song, onChange, onNewSong, onHome }: EditorProps) {
           onPreview={preview}
           onAddMeasure={() => edit(editAllParts(song, (p) => setMeasures(p, song.measures + 1)))}
           getPlayBeat={getPlayBeat}
+          progression={progressionChips}
+          onChordLane={openLane}
+          highlight={highlight}
         />
         <p className={`hint ${message ? 'error' : ''}`}>
           {message ??
@@ -314,14 +343,46 @@ export function Editor({ song, onChange, onNewSong, onHome }: EditorProps) {
           value={chordSpec}
           onChange={setChordSpec}
           onPreview={previewSpec}
-          replacing={!!selected}
+          replacing={!!selected && !laneTarget}
           armed={chordInput}
           onApply={applyChord}
           onStop={() => {
             setChordInput(false)
             setPickerOpen(false)
           }}
-          onClose={() => setPickerOpen(false)}
+          onClose={closePicker}
+          lane={
+            laneTarget
+              ? {
+                  where: `bar ${laneTarget.measure + 1}, beat ${laneTarget.tick / TPQ + 1}`,
+                  onRemove: laneEntry
+                    ? () => {
+                        edit(setChordAt(song, laneTarget.measure, laneTarget.tick, null))
+                        closePicker()
+                      }
+                    : undefined,
+                }
+              : null
+          }
+        />
+      )}
+
+      {arrangeOpen && (
+        <ArrangeSheet
+          song={song}
+          track={track}
+          staff={Math.min(selStaff, parts.length - 1)}
+          onEdit={edit}
+          onMessage={setMessage}
+          onHighlight={setHighlight}
+          onShowTrack={(t, k) => {
+            switchTrack(t)
+            setStaffIdx(k)
+          }}
+          onClose={() => {
+            setArrangeOpen(false)
+            setHighlight(null)
+          }}
         />
       )}
 

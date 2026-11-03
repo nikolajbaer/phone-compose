@@ -201,3 +201,20 @@ export function chordLabels(layout: SongLayout): { x: number; text: string; key:
   }
   return out
 }
+
+/** x of a bar and tick (where a note there would start). */
+export function xOfTick(layout: SongLayout, measure: number, tick: number): number {
+  const m = layout.measures[measure]
+  if (!m) return layout.width
+  const s = m.slots.find((sl) => tick >= sl.ev.tick && tick < sl.ev.tick + sl.ev.dur)
+  return s ? s.x + ((tick - s.ev.tick) / s.ev.dur) * s.w : m.x + MEASURE_PAD_L
+}
+
+/** The bar and beat (in ticks, rounded down to the beat) under an x coordinate. */
+export function beatAtX(layout: SongLayout, px: number): { measure: number; tick: number } | null {
+  const hit = hitSlot(layout, px)
+  if (!hit) return null
+  const { slot } = hit
+  const t = slot.ev.tick + Math.max(0, Math.min(0.999, (px - slot.x) / slot.w)) * slot.ev.dur
+  return { measure: hit.measure.index, tick: Math.floor(t / TPQ) * TPQ }
+}

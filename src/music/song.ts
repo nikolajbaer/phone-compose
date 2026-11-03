@@ -1,4 +1,6 @@
 import type { ClefId } from './clefs'
+import type { ChordEntry } from './progression'
+import type { Phrase } from './phrases'
 import { TPQ, restsFor, type RestPiece } from './duration'
 import { getInstrument } from './instruments'
 import { keyAlter, letterOf, toMidi } from './theory'
@@ -51,6 +53,10 @@ export interface Song {
   fifths: number
   measures: number
   tracks: Track[]
+  /** Chords by bar and beat (see progression.ts). */
+  progression?: ChordEntry[]
+  /** Named phrases saved with the song (see phrases.ts). */
+  phrases?: Phrase[]
   createdAt: number
   updatedAt: number
 }

@@ -18,9 +18,11 @@ interface Props {
   onApply: () => void
   onStop: () => void
   onClose: () => void
+  /** Editing the progression: where (e.g. "bar 3, beat 1"), and removing the chord there. */
+  lane?: { where: string; onRemove?: () => void } | null
 }
 
-export function ChordPicker({ fifths, value, onChange, onPreview, replacing, armed, onApply, onStop, onClose }: Props) {
+export function ChordPicker({ fifths, value, onChange, onPreview, replacing, armed, onApply, onStop, onClose, lane }: Props) {
   const set = (patch: Partial<ChordSpec>) => {
     const next = { ...value, ...patch }
     next.inversion = Math.min(next.inversion, inversionCount(next.quality) - 1)
@@ -100,13 +102,18 @@ export function ChordPicker({ fifths, value, onChange, onPreview, replacing, arm
         </section>
 
         <div className="sheet-actions">
-          {armed && !replacing && (
+          {lane?.onRemove && (
+            <button className="btn" onClick={lane.onRemove}>
+              Remove
+            </button>
+          )}
+          {!lane && armed && !replacing && (
             <button className="btn" onClick={onStop}>
               Stop chord input
             </button>
           )}
           <button className="btn primary" onClick={onApply}>
-            {replacing ? 'Replace selected chord' : armed ? 'Done' : 'Write this chord'}
+            {lane ? `Set chord at ${lane.where}` : replacing ? 'Replace selected chord' : armed ? 'Done' : 'Write this chord'}
           </button>
         </div>
       </div>
